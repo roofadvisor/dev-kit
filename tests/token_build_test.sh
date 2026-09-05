@@ -12,6 +12,7 @@ pass=0; fail=0
 check() { if [ "$2" -eq "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 (expected exit $2, got $3)"; fi }
 has()   { if printf '%s' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 (missing: $3)"; fi }
 hasnt() { if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 (unexpected: $3)"; else pass=$((pass+1)); fi }
+swap() { sed -i.bak "s/$1/$2/" "$3" && rm -f "$3.bak"; }
 
 # A minimal but realistic two-file system, the layout every roof-club system uses.
 fixture() {
@@ -41,7 +42,7 @@ hasnt "clean system warns about nothing" "$out" "WARNING"
 has   "clean system emits the leading token" "$(cat "$D/out.css")" "--leading-normal"
 
 # red: the exact roof-club bug — the builder reads font.leading, not font.line-height
-sed -i '' 's/"leading"/"line-height"/' "$D/foundation.json"
+swap '"leading"' '"line-height"' "$D/foundation.json"
 out=$(node "$B" --in "$D" --out "$D/out.css" 2>&1); check "unmapped group still builds (warn, not fail)" 0 $?
 has "unmapped group is reported"        "$out" "produced no CSS variable"
 has "unmapped group is named"           "$out" "font.line-height"
@@ -50,7 +51,7 @@ hasnt "the dropped var is genuinely absent" "$(cat "$D/out.css")" "--leading-"
 
 # --strict is what a project's own token gate should run
 node "$B" --in "$D" --out "$D/out.css" --strict >/dev/null 2>&1; check "--strict makes an unmapped group fatal" 1 $?
-sed -i '' 's/"line-height"/"leading"/' "$D/foundation.json"
+swap '"line-height"' '"leading"' "$D/foundation.json"
 node "$B" --in "$D" --out "$D/out.css" --strict >/dev/null 2>&1; check "--strict passes a clean system" 0 $?
 rm -rf "$D"
 
