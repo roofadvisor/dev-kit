@@ -22,6 +22,10 @@ check "package-lock root name matches"                    "@roofadvisor/dev-kit"
 vlist=$(grep -oE '^for t in [a-z_ ]+; do' "$KIT/scripts/verify.sh" | sed -E 's/^for t in (.*); do/\1/')
 clist=$(grep -oE 'for t in [a-z_ ]+; do' "$KIT/.github/workflows/gates.yml" | sed -E 's/for t in (.*); do/\1/')
 check "the plugin's CI runs every harness verify.sh runs" "$vlist" "$clist"
+# main-verify runs on every push to main — the surface that matters most in a repo that merges by
+# fast-forward. It carried a third, six-harness list of its own.
+mlist=$(grep -oE 'for t in [a-z_ ]+; do' "$KIT/.github/workflows/main-verify.yml" | sed -E 's/for t in (.*); do/\1/')
+check "main-verify runs every harness verify.sh runs"      "$vlist" "$mlist"
 
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
