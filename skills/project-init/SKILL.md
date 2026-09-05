@@ -218,14 +218,28 @@ Read `references/scaffold-spec.md` for exact file contents and layout. At entry 
 6. `.claude/settings.json` — wires **only** `guard-local.sh` (`PreToolUse`, matcher `Bash|Read|Edit|Write`). Do not add entries for `guard.sh`, `rule-zero.sh`, `done-check.sh`, `format.sh`, `verify-record.sh`, or `session-context.sh` here — **A18: `${CLAUDE_PLUGIN_ROOT}` does not resolve inside a project's own `settings.json`.** A hook command built from it there is silently skipped, never run, not even with an empty value (measured on CLI 2.1.220 — `docs/BACKLOG.md` A18). That is what this step used to tell the scaffolder to write. Those six hooks are now declared once, globally, in the plugin's own `hooks/hooks.json` — the only place the variable resolves — and each one gates itself on `.claude/.framework-state.json` (written in step 7) before doing anything else, so installing the plugin does not silently switch on enforcement in every *other* repo the user has open, only ones this kit has scaffolded. Writing a redundant entry here would either duplicate that global wiring (double subprocess cost, double `.enforcement-log` lines per real deny) or, in the old broken form, do nothing at all. A15's session-telemetry reasoning for `SessionStart` still applies — it is unaffected by where the hook is declared. See `${CLAUDE_PLUGIN_ROOT}/templates/process/ENFORCEMENT.md`.
 7. `.claude/agents/*.md` — only the selected agents: `verify-runner` unconditionally, plus `schema-reviewer` / `integration-auditor` / `contract-drift-checker` / `design-critic` exactly when `database` / `data-integration` / `contracts` / any `design-*` module (respectively) is in `decided_modules` — see `references/module-catalog.md` § *Agent Catalog*; no separate interview question. Also write `.claude/.framework-state.json` recording the interview's companion answer and any design bundles selected — the **full initial object**, not just the `companions` key: `{"version": null, "files": {}, "bundles": ["design.tokens", "..."], "companions": {"<name>": {"min_version": "<v>", "why": "<one line>", "source": "<marketplace or URL>"}}}`. `bundles` holds the raw Round 3 design-capability answer (`design.tokens` / `design.verify` / `design.content` / `design.direction` / `design.build` / `design.govern`) independently of which `design-*` module(s) it resolved to — `design.content`, for instance, can be declared with no module behind it, the same way a declared companion is a declaration and not a rules module either. The framework baseline (`version`/`files`) is not recorded until step 11 runs `upgrade.py --apply`, so this file is the only state anything reads until then — and `upgrade.py` must be able to load it without crashing, treating a missing `companions` or a missing `bundles` the same way: absent means empty, never a crash (C1). Files written before this change lack `bundles` entirely; that must resolve to `[]`, not an error. Declare only what the project genuinely relies on: G-06 means an unmet declaration is a finding, so declaring a plugin nobody uses — or a bundle nothing backs — manufactures a permanent false alarm. Verify with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_companions.py"` before finishing.
 7a. **Design artifacts** — only when a design bundle was selected:
-   - `design-tokens.json` at the project root, seeded from
-     `${CLAUDE_PLUGIN_ROOT}/kit/tokens/`. Replace the `primitive.brand` ramp with
-     the project's brand; keep the semantic and component tiers. Prove it:
-     `python3 "${CLAUDE_PLUGIN_ROOT}/kit/scripts/validate_contrast.py" design-tokens.json`.
-     Then build it: `node "${CLAUDE_PLUGIN_ROOT}/kit/scripts/build_tokens.mjs"
-     --in design-tokens.json --out src/theme.css` — the CSS-variable theme
-     (`--color-*`, `--space-*`, `--radius-*`, ...) every component, including
-     the worked example below, resolves its `var(--...)` references against.
+   - `design-tokens.json` at the project root: **copy**
+     `${CLAUDE_PLUGIN_ROOT}/templates/scaffold/design-tokens.json`, the generated
+     single-file seed — colour tiers top-level, every other token file keyed by its
+     stem, the one shape that builds at parity with `kit/tokens/` (`/gate` proves it
+     on every plugin change). Then replace the `primitive.brand` ramp with the
+     project's brand; keep the semantic and component tiers. Never merge
+     `kit/tokens/*.json` by hand: a flat merge builds 70 of 320 variables.
+   - Prove it with the project's **own** authoring gate — the exact command step 9
+     writes into `verify`, from the kit `npm ci` installs (ADR 005):
+     ```sh
+     K=node_modules/@roofadvisor/dev-kit/kit
+     [ -f "$K/scripts/build_tokens.mjs" ] || { echo "dev-kit is not installed — run: npm ci"; exit 1; }
+     python3 "$K/scripts/validate_tokens.py" design-tokens.json
+     python3 "$K/scripts/validate_contrast.py" design-tokens.json
+     node "$K/scripts/build_tokens.mjs" --in design-tokens.json --out src/theme.css --strict
+     python3 "$K/scripts/lint_hardcodes.py" src/components
+     ```
+     `src/theme.css` is the CSS-variable theme (`--color-*`, `--space-*`,
+     `--radius-*`, ...) every component, including the worked example below,
+     resolves its `var(--...)` references against. `lint_hardcodes.py` refuses an
+     empty directory, so write the worked example in this step — before step 9's
+     verify first runs, not after.
      Skipping this leaves every one of those variables undefined.
    - `src/components/`, `public/images/`, `reference/` with `.gitkeep` files
    - One worked example component with its harness —
@@ -256,15 +270,20 @@ Read `references/scaffold-spec.md` for exact file contents and layout. At entry 
 8. Local stack + `scripts/dev-reset.sh`:
    - Multi-instance project → `docker-compose.multi.yml` (two app instances, nginx round-robin, redis, and a **separate migrate step**) plus `scripts/nginx-lb.conf`. **This is the default.** One instance locally makes every statefulness bug invisible until production.
    - Single-instance project → `docker-compose.yml`, and ADR 002 recording that choice with its reversal cost.
-9. `verify` script in `package.json` and/or `Makefile`
-10. `.github/workflows/` — `verify.yml`, always, rendered from `${CLAUDE_PLUGIN_ROOT}/templates/scaffold/verify.yml.tmpl` (fill `{{DB_NAME}}`, `{{SETUP_CMDS}}`, `{{VERIFY}}` — same token-fill pattern as `CLAUDE.md.tmpl` in step 2 — so the workflow runs the command step 9 established). If the org profile has `claude_github_app: installed` and `notion_work_db` set, also copy `claude.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/claude.yml`, `claude-code-review.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/claude-code-review.yml`, and `notion-sync.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/notion-sync.yml`; then copy `scripts/notion_sync.py` to `.github/scripts/`.
+9. `verify` script in `package.json` and/or `Makefile`. For a Node project, also add
+   `"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v<version>"` to `devDependencies` — the
+   version this plugin reports in `installed_plugins.json` — and run `npm ci`: every design and
+   registry gate runs from `node_modules/@roofadvisor/dev-kit` (ADR 005), and fails naming
+   `npm ci` when it is absent. A project with no `package.json` keeps the registry fragment
+   in the scaffold-spec and its honest `SKIPPED`.
+10. `.github/workflows/` — `verify.yml`, always, rendered from `${CLAUDE_PLUGIN_ROOT}/templates/scaffold/verify.yml.tmpl` (fill `{{DB_NAME}}`, `{{SETUP_CMDS}}`, `{{VERIFY}}` — same token-fill pattern as `CLAUDE.md.tmpl` in step 2 — so the workflow runs the command step 9 established). `{{SETUP_CMDS}}` is `npm ci` for a Node project (plus `npx playwright install --with-deps chromium` only when the verify command runs render gates): it is the line that puts the kit on the runner, which is what lets the design gate inside `{{VERIFY}}` run for real there rather than skip. If the org profile has `claude_github_app: installed` and `notion_work_db` set, also copy `claude.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/claude.yml`, `claude-code-review.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/claude-code-review.yml`, and `notion-sync.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/notion-sync.yml`; then copy `scripts/notion_sync.py` to `.github/scripts/`.
    Also write `.github/ISSUE_TEMPLATE/bug.yml` and `feature.yml` — structured enough that `@claude` can act on a report directly.
 11. **Process layer** — always, regardless of project size:
    - `docs/specs/`, `docs/decisions/`, `docs/log.md`, `docs/intake.md`
    - `docs/LIFECYCLE.md`, `docs/DEFINITION.md`, `docs/ENFORCEMENT.md`, and `docs/TEST_STRATEGY.md` copied from `${CLAUDE_PLUGIN_ROOT}/templates/process/`
    - `tests/hooks_test.sh` copied from the kit, and wired into the verify command
    - `${CLAUDE_PLUGIN_ROOT}/templates/tests/guard_tests.{py,ts}` copied to the project suite — S-01 and S-02 apply to every project
-   - `.github/workflows/gates.yml`, copied from `${CLAUDE_PLUGIN_ROOT}/templates/github/gates.yml`, plus `scripts/check_*.py` copied to `.github/scripts/` — only the jobs whose rules this project holds. Also copy `scripts/render_instructions.py`, the renderer that `check_instruction_honesty.py` (C-10) depends on. Delete the rest; a gate for a rule the project does not have will fail confusingly.
+   - `.github/workflows/gates.yml`, copied from `${CLAUDE_PLUGIN_ROOT}/templates/github/gates.yml` — only the jobs whose rules this project holds; delete the rest, a gate for a rule the project does not have will fail confusingly. The gate scripts are **not** copied: the workflow runs them from `node_modules/@roofadvisor/dev-kit/scripts/` (the devDependency from step 9; ADR 005) and fails while `.github/scripts/` holds `check_*.py` copies.
    - `.github/workflows/preflight.yml`, copied from `${CLAUDE_PLUGIN_ROOT}/templates/github/preflight.yml` — asserts required secrets exist before anything depends on them
    - Set the `SINGLE_INSTANCE` repo variable to `1` for single-instance projects, so the statelessness gate does not fire wrongly. A gate that fires wrongly gets disabled, and a disabled gate protects nothing.
    - Run `scripts/upgrade.py --apply` once at the end to record the framework baseline in `.claude/.framework-state.json`. Without it, the first upgrade cannot tell a local customization from a framework change.

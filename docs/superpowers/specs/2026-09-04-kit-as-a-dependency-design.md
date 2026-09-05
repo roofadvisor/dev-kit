@@ -184,11 +184,11 @@ gates at all.
 
 What goes, what stays:
 
-- **Deleted:** the scaffold-spec's inline `node -e` fragment (§4.5 rewrites the row);
-  roof-club's `scripts/devkit-path.sh`, and in its `verify.sh` both the `devkit-path.sh` call
-  and the cache-search fallback beneath it — replaced at their call sites (that resolution
-  block, `design:lint`, `design:verify`). Cited by content rather than line: those lines have
-  moved in each of the last two roof-club PRs, and the migration edits `origin/main`.
+- **Deleted:** the scaffold-spec's inline `node -e` fragment (§4.5 rewrites the row), and the
+  cache-search fallback in roof-club's `verify.sh`. **Reduced, not deleted:** roof-club's
+  `scripts/devkit-path.sh`. The plan found fourteen call sites, not three — ten of them
+  render-gate commands in the prototype-completion plan — so the script now prints the fixed
+  path or fails naming `npm ci`, and resolves nothing. The principle holds; the file stays.
 - **Kept:** `scripts/_common.py`'s `plugin_registry_path()`. It answers a different question —
   what Claude Code has installed — which `project-audit` needs, and which skills' prose
   `${CLAUDE_PLUGIN_ROOT}` references continue to mean. Gates use the pinned copy; skills use
@@ -243,7 +243,7 @@ itself does not change.
 
 **(d) A named migration in `framework-upgrade`**, in the prose form the existing
 *"`frontend` → design modules (2.0.0)"* entry uses — *"kit as a devDependency (2.2.0)"*:
-add the pinned devDependency; delete the inline fragment or `devkit-path.sh` and repoint its
+add the pinned devDependency; delete the inline fragment, or reduce `devkit-path.sh` to the fixed path, and repoint its
 call sites; delete `.github/scripts/check_*.py` and `render_instructions.py` and repoint
 `gates.yml` (§4.6); confirm the CI setup runs `npm ci`; run the project verify (an upgrade that
 breaks verify is not done). roof-club migrates first, in this release; GHL-MCP when it adopts a
@@ -410,5 +410,5 @@ Each step ends green on its own validators; a `SKIPPED` gate is never a passed g
   `skills/framework-upgrade/SKILL.md` (named migration), `templates/github/gates.yml` (header, `npm ci`, gate path)
 - `docs/decisions/005-kit-as-a-dependency.md` (new), `CHANGELOG.md`, `.claude-plugin/plugin.json`
 - `.github/workflows/` — the consumer end-to-end job
-- roof-club: `package.json`, `design/systems/verify.sh`, `scripts/devkit-path.sh` (deleted),
+- roof-club: `package.json`, `design/systems/verify.sh`, `scripts/devkit-path.sh` (reduced to the fixed path),
   `docs/specs/2026-08-31-design-system-family.md` (authoring-gate paragraph)
