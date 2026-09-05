@@ -17,6 +17,7 @@
 - The plugin's own CI must list every harness `scripts/verify.sh` lists — both `.github/workflows/gates.yml` ("harnesses" job, runs on pull requests) and `.github/workflows/main-verify.yml` ("Harnesses" step, runs on every push to `main`). They ran seven and six of eleven when this plan was written; `tests/release_test.sh` asserts all three lists are equal from Task 1 on.
 - Conventional commits ending `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Stage explicit paths, never `git add -A`.
 - `grep` on this machine is ugrep: `$`, `|`, `+`, `?`, `()` mid-pattern are regex. Use `grep -F` for every literal needle.
+- In-place `sed` is `sed -i.bak '…' FILE && rm FILE.bak`. BSD sed wants `-i ''`, GNU sed reads that as a script file, and the `harnesses` job runs GNU sed — `tests/token_build_test.sh` passed here and failed there on exactly this (Task 5's first CI run).
 - The package: name `@roofadvisor/dev-kit`, `private: true`, `files` exactly `["kit", "scripts", ".claude-plugin"]`, `version` equal to `.claude-plugin/plugin.json`'s. The plugin name `dev-kit` (plugin.json, marketplace.json) does not change.
 - The fixed kit path in a consumer: `node_modules/@roofadvisor/dev-kit/kit`. Presence means `scripts/build_tokens.mjs` exists there, not that the directory does. `KIT=<dir>` overrides it, for tests and plugin checkouts.
 - Pin form: `"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"`; before the tag exists (Task 6), the branch SHA.
@@ -819,7 +820,23 @@ git push -u origin HEAD
 git rev-parse HEAD
 ```
 
-Record the printed SHA: it is Task 6's interim pin. A git-ref install fetches it only because the branch is on GitHub. Then trigger the plugin's own CI: its `harnesses` and `gates` jobs run on pull requests only (`on: pull_request`), and this branch lands on `main` by fast-forward, so open a draft PR — `gh pr create --draft --base main --head "$(git rev-parse --abbrev-ref HEAD)" --title "2.2.0 — the kit is a dependency" --body "Draft, to run CI on the branch; it merges by fast-forward at Task 10. 🤖 Generated with [Claude Code](https://claude.com/claude-code)"` — then `sleep 120; gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 3 --json workflowName,conclusion`. The `harnesses` job now runs twelve harnesses on a runner for the first time; a failure there is a harness that only passes on a laptop, and it is fixed before Task 6 pins this SHA.
+Record the printed SHA: it is Task 6's interim pin. A git-ref install fetches it only because the branch is on GitHub. Then trigger the plugin's own CI: its `harnesses` and `gates` jobs run on pull requests only (`on: pull_request`), and this branch lands on `main` by fast-forward, so open a draft PR. The kit's own `check_rollback.py` (O-02) reads the PR body and requires a `## Rollback` section, so the body is a file:
+
+```bash
+cat > /tmp/pr-body.md <<'EOF'
+Draft, to run CI on the branch; it merges by fast-forward at Task 10.
+
+## Rollback
+No migration and no data. On `main`, `git revert` the release range and cut 2.2.1; consumers meanwhile pin the previous tag, `"github:roofadvisor/dev-kit#v2.1.1"`, which this PR backfills. A published tag is never moved or deleted.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+gh pr create --draft --base main --head "$(git rev-parse --abbrev-ref HEAD)" --title "2.2.0 — the kit is a dependency" --body-file /tmp/pr-body.md
+gh pr checks "$(gh pr view --json number --jq .number)" --watch || true
+gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 3 --json workflowName,conclusion
+```
+
+The `harnesses` job now runs twelve harnesses on a runner for the first time; a failure there is a harness that only passes on a laptop, and it is fixed before Task 6 pins this SHA. The `registry gates` job runs `check_commits.py` (C-06, subject ≤ 100 chars) over `origin/main..HEAD` for the first time too; a subject over the limit is reworded before the fast-forward at Task 10 — force-push is human-only (C-02), so that rewrite is the owner's, at Task 10's stop.
 
 ---
 
@@ -1716,7 +1733,7 @@ Expected: `fast-forward`; `main-verify success`, `gates success` and `consumer s
 
 ```bash
 cd /Users/ian-ra/code-projects/RoofAdvisor/roof-club/.worktrees/kit-as-dependency
-sed -i '' 's|"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#[0-9a-f]\{40\}"|"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"|' package.json
+sed -i.bak 's|"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#[0-9a-f]\{40\}"|"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"|' package.json && rm package.json.bak
 grep -F '"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"' package.json
 npm install --no-audit --no-fund
 python3 -c "import json;print(json.load(open('node_modules/@roofadvisor/dev-kit/.claude-plugin/plugin.json'))['version'])"   # 2.2.0
