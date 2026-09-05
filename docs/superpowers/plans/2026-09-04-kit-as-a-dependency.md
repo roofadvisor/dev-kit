@@ -393,14 +393,16 @@ Insert before the final `echo "pass=$pass fail=$fail"`:
 
 ```bash
 # ---------- B3b: a ref resolves by its real path, never by dropping a first segment ----------
-# `{nope.ink.900}` used to resolve: both resolvers stripped any first segment and retried, and
-# validate_tokens then matched any key ENDING in the ref. That is how `{dataviz.…}` passed for a
-# file called data-viz.json.
+# `{nope.primitive.ink.900}` used to resolve: both resolvers stripped any first segment and
+# retried — leaving `primitive.ink.900`, a real key — and validate_tokens then matched any key
+# ENDING in the ref. That is how `{dataviz.…}` passed for a file called data-viz.json. The fake
+# ref needs one segment MORE than the real path: `{nope.ink.900}` would strip to `ink.900`, which
+# is not a key, and the test would pass before the fix for the wrong reason.
 D="$(fixture)"
 python3 - "$D/colors.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
-d["semantic"]["text"]["primary"]["$value"] = "{nope.ink.900}"
+d["semantic"]["text"]["primary"]["$value"] = "{nope.primitive.ink.900}"
 json.dump(d, open(p, "w"))
 PY
 python3 "$KIT/kit/scripts/validate_tokens.py" "$D" >/dev/null 2>&1; check "B3b: validate_tokens rejects a ref through a namespace that is not a file" 1 $?
@@ -417,7 +419,7 @@ has "B3: --color-chart-positive emits from the corrected ref" "$css" "--color-ch
 - [ ] **Step 2: Run — expect red**
 
 Run: `bash tests/token_build_test.sh`
-Expected: `FAIL: B3b: validate_tokens …` (exit 0 — the accident resolves it) and `FAIL: B3b: the builder …` (`--color-text-primary: #111111` is emitted through `nope.`), `pass=24 fail=2` — the 22 existing checks plus the two B3 checks, which pass for now. The B3 checks pass for now — the typo still resolves by accident.
+Expected: `FAIL: B3b: validate_tokens …` (exit 0 — the accident strips `nope.` and finds `primitive.ink.900`) and `FAIL: B3b: the builder …` (`--color-text-primary: #111111` is emitted through `nope.`), `pass=24 fail=2` — the 22 existing checks plus the two B3 checks, which pass for now. The B3 checks pass for now — the typo still resolves by accident.
 
 - [ ] **Step 3: B3b in the builder**
 
@@ -490,7 +492,7 @@ git add kit/scripts/build_tokens.mjs kit/scripts/validate_tokens.py kit/tokens/d
 git commit -m "fix: token refs resolve by their real path, never by dropping a first segment (B3b, B3)
 
 Both resolvers stripped any first segment and retried, and the validator
-then matched any key ending in the ref. {nope.ink.900} resolved. So did
+then matched any key ending in the ref. {nope.primitive.ink.900} resolved. So did
 data-viz.json's {dataviz.…} — a typo that had never been seen because the
 accident absorbed it. A ref now has to be a key; the map already carries
 every leaf bare and stem-namespaced, so every legitimate form still hits.
