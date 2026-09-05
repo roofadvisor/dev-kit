@@ -17,7 +17,7 @@
 - The plugin's own CI must list every harness `scripts/verify.sh` lists — both `.github/workflows/gates.yml` ("harnesses" job, runs on pull requests) and `.github/workflows/main-verify.yml` ("Harnesses" step, runs on every push to `main`). They ran seven and six of eleven when this plan was written; `tests/release_test.sh` asserts all three lists are equal from Task 1 on.
 - Conventional commits ending `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Stage explicit paths, never `git add -A`.
 - `grep` on this machine is ugrep: `$`, `|`, `+`, `?`, `()` mid-pattern are regex. Use `grep -F` for every literal needle.
-- In-place `sed` is `sed -i.bak '…' FILE && rm FILE.bak`. BSD sed wants `-i ''`, GNU sed reads that as a script file, and the `harnesses` job runs GNU sed — `tests/token_build_test.sh` passed here and failed there on exactly this (Task 5's first CI run).
+- In-place `sed` is `sed -i.bak '…' FILE && rm -f FILE.bak`. BSD sed wants `-i ''`, GNU sed reads that as a script file, and the `harnesses` job runs GNU sed — `tests/token_build_test.sh` passed here and failed there on exactly this (Task 5's first CI run).
 - The package: name `@roofadvisor/dev-kit`, `private: true`, `files` exactly `["kit", "scripts", ".claude-plugin"]`, `version` equal to `.claude-plugin/plugin.json`'s. The plugin name `dev-kit` (plugin.json, marketplace.json) does not change.
 - The fixed kit path in a consumer: `node_modules/@roofadvisor/dev-kit/kit`. Presence means `scripts/build_tokens.mjs` exists there, not that the directory does. `KIT=<dir>` overrides it, for tests and plugin checkouts.
 - Pin form: `"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"`; before the tag exists (Task 6), the branch SHA.
@@ -969,6 +969,8 @@ with
 
 The `version_ge` function above these lines stays: `MIN_KIT` still uses it.
 
+Further down, in the component-harness comment (PR #100 added these harnesses after this plan's baseline), the sentence `Playwright is the kit's, not a repo dependency.` becomes `Playwright is this repo's devDependency (the kit resolves it from the gated project and does not ship it); its browser is a once-per-machine npx playwright install chromium.` — see Step 5.
+
 - [ ] **Step 5: The devDependency, at the interim pin**
 
 With `SHA` from Task 5, in `package.json` after the line `"devDependencies": {` add, as the first entry:
@@ -977,7 +979,7 @@ With `SHA` from Task 5, in `package.json` after the line `"devDependencies": {` 
     "@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#SHA",
 ```
 
-(the literal 40-character SHA in place of `SHA`). Then:
+(the literal 40-character SHA in place of `SHA`). Also add `"playwright": "^1.62.1",` after `"jsdom"`: the component harnesses (`verify_clip.mjs`) load Playwright through the kit's `_playwright.mjs`, which resolves it from the project being gated and never ships it — on the author's machine it had been found by accident in the parent checkout's `node_modules`, so `npm ci` alone could not run the gate anywhere else (ruling R10). Its browser stays a once-per-machine `npx playwright install chromium`; Playwright names that command itself when it is missing. Then:
 
 ```bash
 npm install --no-audit --no-fund
@@ -1017,8 +1019,8 @@ skips,** when `npm ci` has not run or the pinned kit is older than 2.1.0: a buil
 
 Run: `npx vitest run tests/design-verify.test.ts` → 3 passed.
 
-Run: `env -u KIT HOME="$(mktemp -d)" CLAUDE_CONFIG_DIR=/nonexistent npm run verify 2>&1 | grep -E "Tests |KIT:|GREEN|OK:|FAIL|Compiled"`
-Expected: `KIT: …/node_modules/@roofadvisor/dev-kit/kit (2.1.1)`, `ALL SYSTEMS GREEN`, the `OK:` lines, `Compiled successfully`, 213+ tests. `HOME` is masked so `~/.claude/plugins` cannot be consulted; the gate ran from `node_modules` or not at all.
+Run: `env -u KIT PLAYWRIGHT_BROWSERS_PATH="$HOME/Library/Caches/ms-playwright" HOME="$(mktemp -d)" CLAUDE_CONFIG_DIR=/nonexistent npm run verify 2>&1 | grep -E "Tests |KIT:|GREEN|OK:|PASS|FAIL|Compiled"`
+Expected: `KIT: …/node_modules/@roofadvisor/dev-kit/kit (2.1.1)`, `PASS  operator harness`, `PASS  base harness`, `ALL SYSTEMS GREEN`, the `OK:` lines, `Compiled successfully`, 390+ tests, no `FAIL`. `HOME` is masked so `~/.claude/plugins` cannot be consulted; the gate ran from `node_modules` or not at all. Playwright's browser cache is per-machine like a Node install, not a plugin cache, so it is passed through (the `$HOME` in the assignment expands before `env` masks it).
 
 Run: `npm run design:lint 2>&1 | tail -1` → `OK: no hardcoded values found.`
 
@@ -1039,6 +1041,13 @@ ci — kept because fourteen commands call it. Proven with HOME masked:
 npm run verify is green with no plugin cache reachable, and removing the
 package fails the gate rather than skipping it. dev-kit ADR 005.
 
+playwright is this repo's own devDependency now: the component harnesses
+(verify_clip.mjs) load it through the kit, which resolves it from the
+project being gated and never ships it — on this machine it had been
+found by accident in a parent checkout's node_modules. The browser stays
+a once-per-machine \`npx playwright install chromium\`; Playwright names
+that command itself when it is missing.
+
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push -u origin feat/kit-as-dependency
 gh pr create --base main --head feat/kit-as-dependency --title "feat: the kit is a devDependency — gates run from node_modules" --body-file - <<'EOF'
@@ -1047,6 +1056,8 @@ The design gates ran from whichever dev-kit plugin cache the machine happened to
 **Interim pin.** `package.json` pins the dev-kit branch SHA that carries the packaging; the pin moves to `github:roofadvisor/dev-kit#v2.2.0` in this PR before it merges, once that tag exists. Do not merge before that commit lands.
 
 **Proven:** `npm run verify` green with `HOME` masked (no plugin cache reachable); removing the package fails `design:verify` rather than skipping it; `tests/design-verify.test.ts` covers both refusals.
+
+**Playwright** becomes a devDependency of this repo: the component harnesses load it through the kit, which resolves it from the project being gated and does not ship it. The browser stays a once-per-machine `npx playwright install chromium`.
 
 **What does not change:** the Claude Code plugin install, `prebuild` (still plugin-free), the app. Render's `npm ci` now also fetches the public dev-kit repo — ~3 s, no GitHub billing.
 
