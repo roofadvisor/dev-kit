@@ -62,7 +62,15 @@ Push and PR creation are hard to walk back. Run them only on an explicit yes.
 - Read the diff and **propose** the semver level with your reasoning. A breaking
   API or payload change is major — argue it rather than assume it. Wait for a yes.
 - Add a `CHANGELOG.md` entry written for a consumer, not a committer.
-- Tag after merge, never before, and only on explicit confirmation.
+- Bump `version` in **both** `.claude-plugin/plugin.json` and `package.json`, then run
+  `bash tests/release_test.sh` — it fails if they disagree. The plugin updater compares
+  version strings, not commits, and consumers pin the tag below; a release with only one
+  field bumped reaches neither.
+- Tag after merge, never before, and only on explicit confirmation — on the release
+  commit once it is on `main`:
+  `git tag -a v<X.Y.Z> -m "release: <X.Y.Z> — <title>" <release commit> && git push origin v<X.Y.Z>`.
+  A consumer's `"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v<X.Y.Z>"` resolves only
+  after this push.
 
 ## 7. Work DB
 
