@@ -353,7 +353,7 @@ Run: `bash tests/token_build_test.sh`
 Expected: `pass=22 fail=0`.
 
 Run: `node kit/scripts/build_tokens.mjs --in kit/tokens 2>/dev/null | grep -cF -- '--space-'`
-Expected: 22 (the 22-step scale) + 30 = `52`.
+Expected: 21 (the 21-step scale) + 30 = `51`.
 
 Run: `bash scripts/verify.sh 2>&1 | tail -3` → `VERIFY PASSED`.
 
