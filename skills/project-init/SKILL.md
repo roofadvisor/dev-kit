@@ -240,7 +240,6 @@ Read `references/scaffold-spec.md` for exact file contents and layout. At entry 
      resolves its `var(--...)` references against. `lint_hardcodes.py` refuses an
      empty directory, so write the worked example in this step — before step 9's
      verify first runs, not after.
-     Skipping this leaves every one of those variables undefined.
    - `src/components/`, `public/images/`, `reference/` with `.gitkeep` files
    - One worked example component with its harness —
      `src/components/Button/{Button.tsx,Button.states.html,index.ts}`.
