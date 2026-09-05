@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.2.0 — the kit is a dependency
+
+Every design gate a project can run needs the plugin's `kit/`, and until now nothing
+put it where a machine could find it without a human having installed Claude Code
+first: the authoring gate ran by hand, three different resolvers answered "where is the
+kit," and a bare CI runner was designed to print `SKIPPED`. The kit is now an installable
+package.
+
+Minor, not patch: tokens that never emitted before now do, and `project-init`'s output
+changes.
+
+- **`"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"`.** `package.json` is
+  `@roofadvisor/dev-kit`; `files` ships `kit/`, `scripts/` and `.claude-plugin/` — about
+  1 MB, not the 2.3 MB repository — and every gate runs from
+  `node_modules/@roofadvisor/dev-kit`. A gate that needs the kit fails naming `npm ci`;
+  it never skips. Release tags exist from `v2.0.0` on, so there is something to pin, and
+  `ship-it` cuts the next one.
+- **The registry gates come the same way.** `templates/github/gates.yml` runs
+  `check_*.py` from `node_modules` after `npm ci`, and fails while `.github/scripts/`
+  still holds copies — the scanners skip dot-directories, so a forgotten copy would drift
+  in silence. Nothing is copied into a project any more.
+- **Single-file token mode works, and is proven.** `project-init` used to say "seed
+  `design-tokens.json` from `kit/tokens/`"; a literal merge built 70 of 320 variables
+  after seven silent key collisions. The seed is generated
+  (`kit/scripts/make_single_file_tokens.mjs`), committed at
+  `templates/scaffold/design-tokens.json`, and `/gate` proves it builds at parity with
+  the directory on every plugin change. A scaffolded project gets its **own** authoring
+  gate — validity, contrast, `--strict`, hardcodes — not the plugin's self-check.
+- **Four bugs the investigation found, fixed together.** 2.1.0's unmapped-group report
+  claimed the colour tiers by bare name, so any file's top-level `semantic` read as
+  covered — `spacing.semantic`'s 30 tokens hid behind it and now emit (`--space-stack-md`,
+  `--space-page-inline-padding`, …). Both resolvers accepted a ref by dropping its first
+  segment, which let `{dataviz.…}` pass for `data-viz.json`; a ref now resolves by its
+  real path only, and the typo is fixed. `package.json`'s version had drifted from
+  `plugin.json`'s; `tests/release_test.sh` fails when they disagree, and also when the
+  plugin's own CI runs fewer harnesses than `verify.sh` — it ran seven of eleven.
+- **Recorded and tested.** ADR 005 supersedes the scaffold-spec's two rationales —
+  against vendoring, against a CI design job — as reasoning that was right for its
+  premises. A consumer end-to-end job installs the kit on a bare runner from a git ref
+  and runs the scaffolded gate, so the install path itself is under test.
+
+Upgrading a project: `framework-upgrade` → *kit as a devDependency (2.2.0)*. Upgrading
+the plugin: `claude plugin update dev-kit@roofadvisor`.
+
 ## 2.1.1 — Rule 0 allows a plan beside its spec
 
 One fix, found by using the plugin. `rule-zero.sh` blocked the first plan ever
