@@ -1,8 +1,9 @@
 {
-  "name": "dev-kit",
+  "name": "@roofadvisor/dev-kit",
   "version": "2.1.1",
   "private": true,
-  "description": "Playwright devDependency for kit/scripts' render gates (measure_render, verify_states, axe_audit, verify_focustrap, verify_rtl, ...). See README.md Notes.",
+  "description": "dev-kit's kit/ and scripts/, installable as a pinned devDependency (github:roofadvisor/dev-kit#vX.Y.Z) so a project's gates run from node_modules on every machine and runner — docs/decisions/005-kit-as-a-dependency.md. Playwright is for the plugin's own render gates (measure_render, verify_states, axe_audit, verify_focustrap, verify_rtl, ...); consumers do not inherit it. See README.md Notes.",
+  "files": ["kit", "scripts", ".claude-plugin"],
   "devDependencies": {
     "playwright": "^1.62.1"
   }
