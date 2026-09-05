@@ -34,7 +34,7 @@
 |---|---|---|
 | `package.json`, `package-lock.json` | the installable package: name, `files`, version parity | 1 |
 | `tests/release_test.sh` (new) | release hygiene: versions agree, name, `files`, private, CI runs every harness | 1 |
-| `scripts/verify.sh:30` | the harness loop gains `release_test` and `relocation_test` | 1, 7 |
+| `scripts/verify.sh:30` | the harness loop gains the tokens `release` and `relocation` (it runs `tests/${t}_test.sh`) | 1, 7 |
 | `.github/workflows/gates.yml` ("harnesses" job) | the CI loop mirrors `verify.sh`'s | 1, 7 |
 | `kit/scripts/build_tokens.mjs` | B1 (colour claims by file), B2 (`spacing.semantic`), B3b (`res()` real-path only) | 2, 3 |
 | `kit/scripts/validate_tokens.py` | B3b (no first-segment or `endswith` fallback) | 3 |
@@ -155,7 +155,7 @@ for t in hooks render_registry render_instructions gate_trio statelessness confo
 to
 
 ```bash
-for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release_test; do
+for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release; do
 ```
 
 In `.github/workflows/gates.yml`, in the `harnesses` job, replace
@@ -173,7 +173,7 @@ with
       - name: Run every harness (this list must equal scripts/verify.sh's — release_test asserts it)
         run: |
           fail=0
-          for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release_test; do
+          for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release; do
 ```
 
 `scanner_agreement`, `agent_presence`, `notion_sync` and `token_build` had never run in CI. They pass locally without network or secrets; if one fails on the runner when Task 5 pushes, that is a real finding about a harness that only passes on a laptop — fix it, do not drop it from the list.
@@ -800,7 +800,7 @@ git push -u origin HEAD
 git rev-parse HEAD
 ```
 
-Record the printed SHA: it is Task 6's interim pin. A git-ref install fetches it only because the branch is on GitHub. Then check the plugin's CI on this push — `gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 2 --json workflowName,conclusion` — the `harnesses` job now runs eleven harnesses for the first time; a failure there is a harness that only passes on a laptop, and it is fixed before Task 6 pins this SHA.
+Record the printed SHA: it is Task 6's interim pin. A git-ref install fetches it only because the branch is on GitHub. Then trigger the plugin's own CI: its `harnesses` and `gates` jobs run on pull requests only (`on: pull_request`), and this branch lands on `main` by fast-forward, so open a draft PR — `gh pr create --draft --base main --head "$(git rev-parse --abbrev-ref HEAD)" --title "2.2.0 — the kit is a dependency" --body "Draft, to run CI on the branch; it merges by fast-forward at Task 10. 🤖 Generated with [Claude Code](https://claude.com/claude-code)"` — then `sleep 120; gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 3 --json workflowName,conclusion`. The `harnesses` job now runs twelve harnesses on a runner for the first time; a failure there is a harness that only passes on a laptop, and it is fixed before Task 6 pins this SHA.
 
 ---
 
@@ -1218,7 +1218,7 @@ fragment and its honest `SKIPPED`, and this migration does not apply to it.
 
 - [ ] **Step 5: Wire the harness into both loops, run green**
 
-In `scripts/verify.sh` line 30, append ` relocation_test` to the loop list (after `release_test`). In `.github/workflows/gates.yml`, append ` relocation_test` to the `for t in …` list in the same position. `release_test` asserts the two lists still agree.
+In `scripts/verify.sh` line 30, append ` relocation` to the loop list (after `release`). In `.github/workflows/gates.yml`, append ` relocation` to the `for t in …` list in the same position. The loops run `tests/${t}_test.sh`, so the token for `tests/relocation_test.sh` is `relocation`, as `token_build` is for `token_build_test.sh`. `release_test` asserts the two lists still agree.
 
 Run: `bash tests/relocation_test.sh` → `pass=14 fail=0`.
 Run: `bash tests/release_test.sh` → `pass=6 fail=0`.
