@@ -1748,7 +1748,7 @@ sed -i.bak 's|"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#[0-9a-f]\{40\}
 grep -F '"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v2.2.0"' package.json
 npm install --no-audit --no-fund
 python3 -c "import json;print(json.load(open('node_modules/@roofadvisor/dev-kit/.claude-plugin/plugin.json'))['version'])"   # 2.2.0
-env -u KIT HOME="$(mktemp -d)" npm run verify 2>&1 | grep -E "Tests |KIT:|GREEN|Compiled"
+env -u KIT PLAYWRIGHT_BROWSERS_PATH="$HOME/Library/Caches/ms-playwright" HOME="$(mktemp -d)" CLAUDE_CONFIG_DIR=/nonexistent npm run verify 2>&1 | grep -E "Tests |KIT:|GREEN|PASS|FAIL|Compiled"
 git add package.json package-lock.json
 git commit -m "chore: pin @roofadvisor/dev-kit to v2.2.0
 
