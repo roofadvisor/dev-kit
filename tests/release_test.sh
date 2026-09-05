@@ -20,6 +20,7 @@ check "package-lock root name matches"                    "@roofadvisor/dev-kit"
 
 # The two harness lists, verbatim from their `for t in …; do` lines.
 vlist=$(grep -oE '^for t in [a-z_ ]+; do' "$KIT/scripts/verify.sh" | sed -E 's/^for t in (.*); do/\1/')
+[ -n "$vlist" ]; check "verify.sh's harness list was found (a reformatted loop would compare three empty lists equal)" 0 $?
 clist=$(grep -oE 'for t in [a-z_ ]+; do' "$KIT/.github/workflows/gates.yml" | sed -E 's/for t in (.*); do/\1/')
 check "the plugin's CI runs every harness verify.sh runs" "$vlist" "$clist"
 # main-verify runs on every push to main — the surface that matters most in a repo that merges by

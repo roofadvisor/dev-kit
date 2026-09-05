@@ -76,14 +76,21 @@ function res(v, depth = 0, dark = null) {
 // 3) emit semantic + component color tokens as --color-* ; dark section as overrides
 const colors = JSON.parse(readFileSync(SINGLE ? IN : join(TOKENS, 'colors.json')));
 const lines = { light: [], dark: [] };
-function emit(obj, prefix, bucket, dark = null) {
+// Dotted leaf paths the colour emitter produced a line for (`semantic.text.primary`). A tier
+// covers only these — a `dimension` under `semantic` used to vanish under --strict without a
+// word.
+const emittedColour = new Set();
+function emit(obj, prefix, bucket, dark = null, path = '') {
   for (const [k, v] of Object.entries(obj || {})) {
     if (k.startsWith('$')) continue;
     if (v && typeof v === 'object' && '$value' in v) {
       const hex = res(v.$value, 0, dark);
-      if (typeof hex === 'string' && /^(#|rgb|hsl)/.test(hex)) lines[bucket].push(`  --color-${prefix}${k}: ${hex};`);
+      if (typeof hex === 'string' && /^(#|rgb|hsl)/.test(hex)) {
+        lines[bucket].push(`  --color-${prefix}${k}: ${hex};`);
+        emittedColour.add(`${path}${k}`);
+      }
     } else if (v && typeof v === 'object') {
-      emit(v, `${prefix}${k}-`, bucket, dark);
+      emit(v, `${prefix}${k}-`, bucket, dark, `${path}${k}.`);
     }
   }
 }
@@ -97,13 +104,13 @@ function flattenDark(obj, prefix = '', out = {}) {
   }
   return out;
 }
-emit(colors.semantic, '', 'light');
-if (colors.component) emit(colors.component, '', 'light');
+emit(colors.semantic, '', 'light', null, 'semantic.');
+if (colors.component) emit(colors.component, '', 'light', null, 'component.');
 if (colors.dark) {
   const darkMap = flattenDark(colors.dark);
-  emit(colors.dark, '', 'dark');
+  emit(colors.dark, '', 'dark', null, 'dark.');
   // the component tier follows the semantic swap into dark, or it stays light
-  if (colors.component) emit(colors.component, '', 'dark', darkMap);
+  if (colors.component) emit(colors.component, '', 'dark', darkMap, 'component.');
 }
 
 /* 4) the rest of the system. Colour alone is not a theme: a project scaffolded from
@@ -259,7 +266,8 @@ function emitGroup(node, prefix, bucket, dark = null) {
 // Colour tiers are claimed by the FILE that carries them — `colors` in a directory, the file
 // itself in single-file mode — and matched on a leaf's full path only (below). 2.1.0 claimed
 // them bare, so a top-level `semantic` in any file read as covered: spacing.json's 30 semantic
-// tokens were hidden from the report that way (2.2.0, B1).
+// tokens were hidden from the report that way (2.2.0, B1). A semantic or component leaf is
+// covered only if the colour emitter wrote a line for it.
 const colourStem = (SINGLE ? SOURCES[0] : 'colors.json').replace(/\.json$/, '');
 const colourClaims = ['primitive', 'semantic', 'component', 'dark'].map(t => `${colourStem}.${t}`);
 const claimed = [];
@@ -299,7 +307,12 @@ const NOT_EMITTED = [
   ['theming', 'theme and density sets are applied by selection, not flattened into :root'],
 ];
 const covers = (path) => claimed.some(c => path === c || path.startsWith(`${c}.`));
-const colourCovered = (full) => colourClaims.some(c => full === c || full.startsWith(`${c}.`));
+const colourCovered = (full) => colourClaims.some((c) => {
+  if (full !== c && !full.startsWith(`${c}.`)) return false;
+  const tier = c.slice(colourStem.length + 1);              // primitive | semantic | component | dark
+  if (tier === 'primitive' || tier === 'dark') return true;  // referenced, or an override map — never emitted as variables
+  return emittedColour.has(full.slice(colourStem.length + 1));
+});
 const excused = (path) => NOT_EMITTED.some(([c]) => path === c || path.startsWith(`${c}.`));
 const unmapped = leaves.filter(
   (l) => !covers(l.bare) && !covers(l.full) && !colourCovered(l.full) && !excused(l.bare) && !excused(l.full)

@@ -69,8 +69,10 @@ function rewrite(ref, stem) {
     r.startsWith('colors.') ? r.slice('colors.'.length) : null,    // {../colors.semantic.x} → hoisted
     ...stems.filter(s => s !== stem && s !== 'colors').map(s => `${s}.${r}`), // bare into another file: {focus-ring}
   ].filter(Boolean);
-  const hit = candidates.find(c => paths.has(c));
-  if (!hit) throw new Error(`{${ref}} in ${stem}.json resolves to nothing in the seed`);
+  const hits = [...new Set(candidates.filter(c => paths.has(c)))];
+  if (hits.length === 0) throw new Error(`{${ref}} in ${stem}.json resolves to nothing in the seed`);
+  if (hits.length > 1) throw new Error(`{${ref}} in ${stem}.json is ambiguous in the seed: ${hits.join(', ')}`);
+  const hit = hits[0];
   return hit;
 }
 // Only values are rewritten — a $description that happens to contain braces is prose.

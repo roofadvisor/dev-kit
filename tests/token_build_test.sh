@@ -149,5 +149,18 @@ node "$KIT/kit/scripts/make_single_file_tokens.mjs" --check >/dev/null 2>&1; che
 python3 "$KIT/kit/scripts/validate_tokens.py"   "$KIT/templates/scaffold/design-tokens.json" >/dev/null 2>&1; check "seed: every alias resolves" 0 $?
 python3 "$KIT/kit/scripts/validate_contrast.py" "$KIT/templates/scaffold/design-tokens.json" >/dev/null 2>&1; check "seed: WCAG pairs pass" 0 $?
 
+# ---------- a non-colour token under a colour tier is not "covered" by the colour emitter ----------
+# A `dimension` under semantic in colors.json used to vanish: the tier claimed it, emit() skipped it,
+# --strict said nothing. It must be reported like any other unmapped group.
+D="$(fixture)"
+node -e '
+const fs=require("fs"),p=process.argv[1];const j=JSON.parse(fs.readFileSync(p));
+j.semantic.gutter={md:{"$type":"dimension","$value":"24px"}};fs.writeFileSync(p,JSON.stringify(j));
+' "$D/colors.json"
+out=$(node "$B" --in "$D" --out "$D/out.css" 2>&1)
+has "a dimension under a colour tier is reported as unmapped" "$out" "colors.semantic.gutter"
+node "$B" --in "$D" --out "$D/out.css" --strict >/dev/null 2>&1; check "--strict refuses a colour tier hiding a non-colour token" 1 $?
+rm -rf "$D"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
