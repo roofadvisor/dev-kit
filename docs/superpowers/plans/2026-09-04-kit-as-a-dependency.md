@@ -14,7 +14,7 @@
 
 - Every task ends green on `bash scripts/verify.sh` in this repo (roof-club tasks: `npm run verify` there). A `SKIPPED` gate is never a passed gate.
 - Harnesses are red-then-green: the test is written, run, and **seen to fail** before the fix; the last line is `echo "pass=$pass fail=$fail"` and `scripts/verify.sh`'s loop reads it.
-- The plugin's own CI (`.github/workflows/gates.yml`, "harnesses" job) must list every harness `scripts/verify.sh` lists. It ran seven of eleven when this plan was written; `tests/release_test.sh` asserts the two lists are equal from Task 1 on.
+- The plugin's own CI must list every harness `scripts/verify.sh` lists — both `.github/workflows/gates.yml` ("harnesses" job, runs on pull requests) and `.github/workflows/main-verify.yml` ("Harnesses" step, runs on every push to `main`). They ran seven and six of eleven when this plan was written; `tests/release_test.sh` asserts all three lists are equal from Task 1 on.
 - Conventional commits ending `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Stage explicit paths, never `git add -A`.
 - `grep` on this machine is ugrep: `$`, `|`, `+`, `?`, `()` mid-pattern are regex. Use `grep -F` for every literal needle.
 - The package: name `@roofadvisor/dev-kit`, `private: true`, `files` exactly `["kit", "scripts", ".claude-plugin"]`, `version` equal to `.claude-plugin/plugin.json`'s. The plugin name `dev-kit` (plugin.json, marketplace.json) does not change.
@@ -35,7 +35,7 @@
 | `package.json`, `package-lock.json` | the installable package: name, `files`, version parity | 1 |
 | `tests/release_test.sh` (new) | release hygiene: versions agree, name, `files`, private, CI runs every harness | 1 |
 | `scripts/verify.sh:30` | the harness loop gains the tokens `release` and `relocation` (it runs `tests/${t}_test.sh`) | 1, 7 |
-| `.github/workflows/gates.yml` ("harnesses" job) | the CI loop mirrors `verify.sh`'s | 1, 7 |
+| `.github/workflows/gates.yml` ("harnesses" job), `.github/workflows/main-verify.yml` ("Harnesses" step) | both CI loops mirror `verify.sh`'s | 1, 7 |
 | `kit/scripts/build_tokens.mjs` | B1 (colour claims by file), B2 (`spacing.semantic`), B3b (`res()` real-path only) | 2, 3 |
 | `kit/scripts/validate_tokens.py` | B3b (no first-segment or `endswith` fallback) | 3 |
 | `kit/tokens/data-viz.json:37-38` | B3 (`{dataviz.…}` → `{data-viz.…}`) | 3 |
@@ -74,9 +74,10 @@
 - Create: `tests/release_test.sh`
 - Modify: `scripts/verify.sh:30`
 - Modify: `.github/workflows/gates.yml` — the "Run all six harnesses" step in the `harnesses` job
+- Modify: `.github/workflows/main-verify.yml` — the "Harnesses" step's loop
 
 **Interfaces:**
-- Produces: `tests/release_test.sh` — exit 0 iff `package.json.version == plugin.json.version`, `name == @roofadvisor/dev-kit`, `files == [kit, scripts, .claude-plugin]`, `private == true`, lock root name matches, and the CI harness list equals `verify.sh`'s. Task 5 tells `ship-it` to run it; Task 10 relies on it.
+- Produces: `tests/release_test.sh` — exit 0 iff `package.json.version == plugin.json.version`, `name == @roofadvisor/dev-kit`, `files == [kit, scripts, .claude-plugin]`, `private == true`, lock root name matches, and both CI harness lists (`gates.yml`, `main-verify.yml`) equal `verify.sh`'s. Task 5 tells `ship-it` to run it; Task 10 relies on it.
 - Produces: `files` shipping `scripts/` — Task 7's `gates.yml` assumes `node_modules/@roofadvisor/dev-kit/scripts/check_*.py` exists in a consumer.
 
 - [ ] **Step 1: Write the failing harness**
@@ -108,6 +109,10 @@ check "package-lock root name matches"                    "@roofadvisor/dev-kit"
 vlist=$(grep -oE '^for t in [a-z_ ]+; do' "$KIT/scripts/verify.sh" | sed -E 's/^for t in (.*); do/\1/')
 clist=$(grep -oE 'for t in [a-z_ ]+; do' "$KIT/.github/workflows/gates.yml" | sed -E 's/for t in (.*); do/\1/')
 check "the plugin's CI runs every harness verify.sh runs" "$vlist" "$clist"
+# main-verify runs on every push to main — the surface that matters most in a repo that merges by
+# fast-forward. It carried a third, six-harness list of its own.
+mlist=$(grep -oE 'for t in [a-z_ ]+; do' "$KIT/.github/workflows/main-verify.yml" | sed -E 's/for t in (.*); do/\1/')
+check "main-verify runs every harness verify.sh runs"      "$vlist" "$mlist"
 
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
@@ -118,7 +123,7 @@ Then `chmod +x tests/release_test.sh`.
 - [ ] **Step 2: Run it — expect red**
 
 Run: `bash tests/release_test.sh`
-Expected: four FAIL lines — name `dev-kit`, files `None`, lock name `dev-kit`, and the CI list (seven harnesses vs eleven) — ending `pass=2 fail=4`. The version check passes: both files say 2.1.1 since the 2.1.1 release.
+Expected: five FAIL lines — name `dev-kit`, files `None`, lock name `dev-kit`, and the two CI lists (seven and six harnesses vs eleven) — ending `pass=2 fail=5`. The version check passes: both files say 2.1.1 since the 2.1.1 release.
 
 - [ ] **Step 3: Rewrite `package.json`**
 
@@ -176,15 +181,27 @@ with
           for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release; do
 ```
 
-`scanner_agreement`, `agent_presence`, `notion_sync` and `token_build` had never run in CI. They pass locally without network or secrets; if one fails on the runner when Task 5 pushes, that is a real finding about a harness that only passes on a laptop — fix it, do not drop it from the list.
+In `.github/workflows/main-verify.yml`, in the `Harnesses` step, replace
+
+```yaml
+          for t in hooks render_registry gate_trio statelessness conformance companions; do
+```
+
+with
+
+```yaml
+          for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release; do
+```
+
+`scanner_agreement`, `agent_presence`, `notion_sync` and `token_build` had never run in CI, and `main-verify` had also dropped `render_instructions`. They pass locally without network or secrets; if one fails on the runner when Task 5 pushes, that is a real finding about a harness that only passes on a laptop — fix it, do not drop it from the list.
 
 - [ ] **Step 6: Run it — expect green**
 
 Run: `bash tests/release_test.sh`
-Expected: `pass=6 fail=0`.
+Expected: `pass=7 fail=0`.
 
 Run: `bash scripts/verify.sh 2>&1 | tail -4`
-Expected: `VERIFY PASSED`, and the harness table lists `release_test  pass=6 fail=0`.
+Expected: `VERIFY PASSED`, and the harness table lists `release  pass=7 fail=0`.
 
 - [ ] **Step 7: Confirm what `files` would ship**
 
@@ -194,7 +211,7 @@ Expected: about 1 MB unpacked, roughly 160 files; no `skills/`, `templates/`, or
 - [ ] **Step 8: Commit**
 
 ```bash
-git add package.json package-lock.json tests/release_test.sh scripts/verify.sh .github/workflows/gates.yml
+git add package.json package-lock.json tests/release_test.sh scripts/verify.sh .github/workflows/gates.yml .github/workflows/main-verify.yml
 git commit -m "chore: package.json is @roofadvisor/dev-kit and ships kit/ scripts/ .claude-plugin/; CI runs every harness
 
 package.json said 2.0.0 while plugin.json said 2.1.0 for a whole release.
@@ -1029,7 +1046,7 @@ Fix or rebut every finding it prints; push again. The PR stays open until Task 1
 - Rewrite: `templates/github/gates.yml:1-72` (header and the `checks` job; `hooks` and `schema` jobs unchanged)
 - Modify: `skills/framework-upgrade/SKILL.md` (a named migration before `## After applying`)
 - Create: `tests/relocation_test.sh`
-- Modify: `scripts/verify.sh:30` and `.github/workflows/gates.yml` (both harness loops)
+- Modify: `scripts/verify.sh:30`, `.github/workflows/gates.yml` and `.github/workflows/main-verify.yml` (all three harness loops)
 
 **Interfaces:**
 - Consumes: `files` shipping `scripts/` (Task 1).
@@ -1218,16 +1235,16 @@ fragment and its honest `SKIPPED`, and this migration does not apply to it.
 
 - [ ] **Step 5: Wire the harness into both loops, run green**
 
-In `scripts/verify.sh` line 30, append ` relocation` to the loop list (after `release`). In `.github/workflows/gates.yml`, append ` relocation` to the `for t in …` list in the same position. The loops run `tests/${t}_test.sh`, so the token for `tests/relocation_test.sh` is `relocation`, as `token_build` is for `token_build_test.sh`. `release_test` asserts the two lists still agree.
+In `scripts/verify.sh` line 30, append ` relocation` to the loop list (after `release`). In `.github/workflows/gates.yml` and `.github/workflows/main-verify.yml`, append ` relocation` to each `for t in …` list in the same position. The loops run `tests/${t}_test.sh`, so the token for `tests/relocation_test.sh` is `relocation`, as `token_build` is for `token_build_test.sh`. `release_test` asserts the two lists still agree.
 
 Run: `bash tests/relocation_test.sh` → `pass=14 fail=0`.
-Run: `bash tests/release_test.sh` → `pass=6 fail=0`.
-Run: `bash scripts/verify.sh 2>&1 | tail -3` → `VERIFY PASSED`, with `relocation_test  pass=14 fail=0` in the table.
+Run: `bash tests/release_test.sh` → `pass=7 fail=0`.
+Run: `bash scripts/verify.sh 2>&1 | tail -3` → `VERIFY PASSED`, with `relocation  pass=14 fail=0` in the table.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add templates/github/gates.yml skills/framework-upgrade/SKILL.md tests/relocation_test.sh scripts/verify.sh .github/workflows/gates.yml
+git add templates/github/gates.yml skills/framework-upgrade/SKILL.md tests/relocation_test.sh scripts/verify.sh .github/workflows/gates.yml .github/workflows/main-verify.yml
 git commit -m "feat: the registry gates run from node_modules — gates.yml, framework-upgrade, relocation test
 
 Fourteen check_*.py were copied into every project's .github/scripts/ and
@@ -1613,7 +1630,7 @@ Expected: `"conclusion": "success"`. If it fails on the install step with an SSH
 
 Change `"version": "2.1.1"` to `"version": "2.2.0"` in `.claude-plugin/plugin.json` and in `package.json`.
 
-Run: `bash tests/release_test.sh` → `pass=6 fail=0`. (Bump only one and it prints the mismatch — that is the check doing its job.)
+Run: `bash tests/release_test.sh` → `pass=7 fail=0`. (Bump only one and it prints the mismatch — that is the check doing its job.)
 
 - [ ] **Step 2: The changelog**
 
@@ -1734,4 +1751,4 @@ Tell the owner: `claude plugin update dev-kit@roofadvisor` on each machine and r
 
 **Deviations from the spec, stated:** roof-club's `devkit-path.sh` is reduced rather than deleted (fourteen call sites; Task 8 amends §4.3/§9); `templates/github/gates.yml`'s header is rewritten in Task 7 with its job rather than in Task 8, so one file is edited once; Task 1 also makes the plugin's own CI run every harness (seven of eleven ran; `release_test` asserts the lists agree), a gap found while writing this plan and in scope because a harness green locally and absent in CI is the failure this release exists to end.
 
-**Type consistency.** `colourStem`/`colourClaims`/`colourCovered` (Task 2) are used only within `build_tokens.mjs`; `make_single_file_tokens.mjs --check` exit codes (0/2) match the harness's `check … 0`; the gate command in Task 8's 3.7a, scaffold-spec section, and Task 9's job are the same six lines; the assertion `ls .github/scripts/check_*.py` is identical in Task 7's template, harness, and migration text; `@roofadvisor/dev-kit` and `node_modules/@roofadvisor/dev-kit/kit` are spelled identically in every task; `release_test` counts: 6 checks from Task 1 on; `token_build_test` counts: 17 → 22 → 26 → 29 across Tasks 2–4; `relocation_test`: 14.
+**Type consistency.** `colourStem`/`colourClaims`/`colourCovered` (Task 2) are used only within `build_tokens.mjs`; `make_single_file_tokens.mjs --check` exit codes (0/2) match the harness's `check … 0`; the gate command in Task 8's 3.7a, scaffold-spec section, and Task 9's job are the same six lines; the assertion `ls .github/scripts/check_*.py` is identical in Task 7's template, harness, and migration text; `@roofadvisor/dev-kit` and `node_modules/@roofadvisor/dev-kit/kit` are spelled identically in every task; `release_test` counts: 7 checks from Task 1 on; `token_build_test` counts: 17 → 22 → 26 → 29 across Tasks 2–4; `relocation_test`: 14.
