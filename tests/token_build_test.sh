@@ -119,14 +119,16 @@ has "B2: --space-component-button-padding-x emits" "$css" "--space-component-but
 node "$B" --in "$KIT/kit/tokens" --out /dev/null --strict >/dev/null 2>&1; check "B2: the kit's own tokens are --strict clean" 0 $?
 
 # ---------- B3b: a ref resolves by its real path, never by dropping a first segment ----------
-# `{nope.ink.900}` used to resolve: both resolvers stripped any first segment and retried, and
-# validate_tokens then matched any key ENDING in the ref. That is how `{dataviz.…}` passed for a
-# file called data-viz.json.
+# `{nope.primitive.ink.900}` used to resolve: both resolvers stripped any first segment and
+# retried — leaving `primitive.ink.900`, a real key — and validate_tokens then matched any key
+# ENDING in the ref. That is how `{dataviz.…}` passed for a file called data-viz.json. The fake
+# ref needs one segment MORE than the real path: `{nope.ink.900}` would strip to `ink.900`, which
+# is not a key, and the test would pass before the fix for the wrong reason.
 D="$(fixture)"
 python3 - "$D/colors.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
-d["semantic"]["text"]["primary"]["$value"] = "{nope.ink.900}"
+d["semantic"]["text"]["primary"]["$value"] = "{nope.primitive.ink.900}"
 json.dump(d, open(p, "w"))
 PY
 python3 "$KIT/kit/scripts/validate_tokens.py" "$D" >/dev/null 2>&1; check "B3b: validate_tokens rejects a ref through a namespace that is not a file" 1 $?
