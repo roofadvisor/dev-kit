@@ -10,8 +10,8 @@ KIT="$(cd "$(dirname "$0")/.." && pwd)"
 B="$KIT/kit/scripts/build_tokens.mjs"
 pass=0; fail=0
 check() { if [ "$2" -eq "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 (expected exit $2, got $3)"; fi }
-has()   { if printf '%s' "$2" | grep -q -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 (missing: $3)"; fi }
-hasnt() { if printf '%s' "$2" | grep -q -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 (unexpected: $3)"; else pass=$((pass+1)); fi }
+has()   { if printf '%s' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 (missing: $3)"; fi }
+hasnt() { if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 (unexpected: $3)"; else pass=$((pass+1)); fi }
 
 # A minimal but realistic two-file system, the layout every roof-club system uses.
 fixture() {
@@ -99,6 +99,24 @@ has "gradient stops emit a linear-gradient" "$css" "linear-gradient(#4f46e5 0%, 
 has "shadow layers still emit as shadows" "$css" "--shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.1)"
 hasnt "shadow did not become a gradient"  "$css" "--shadow-sm: linear-gradient"
 rm -rf "$D"
+
+# ---------- B1: colour tiers are claimed by their FILE, not by bare name ----------
+# 2.1.0 seeded `claimed` with bare 'primitive','semantic','component','dark', so a top-level
+# `semantic` in ANY file read as covered — spacing.json's 30 semantic tokens hid behind it.
+D="$(fixture)"
+cat > "$D/layout.json" <<'JSON'
+{ "semantic": { "gutter": { "md": {"$type":"dimension","$value":"24px"} } } }
+JSON
+out=$(node "$B" --in "$D" --out "$D/out.css" 2>&1)
+has "B1: a non-colour file's top-level semantic group is reported" "$out" "layout.semantic"
+rm -rf "$D"
+
+# ---------- B2: spacing.semantic emits ----------
+css=$(node "$B" --in "$KIT/kit/tokens" 2>/dev/null)
+has "B2: --space-page-inline-padding emits"        "$css" "--space-page-inline-padding:"
+has "B2: --space-stack-md emits"                   "$css" "--space-stack-md:"
+has "B2: --space-component-button-padding-x emits" "$css" "--space-component-button-padding-x:"
+node "$B" --in "$KIT/kit/tokens" --out /dev/null --strict >/dev/null 2>&1; check "B2: the kit's own tokens are --strict clean" 0 $?
 
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
