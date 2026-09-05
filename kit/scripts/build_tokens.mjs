@@ -65,8 +65,11 @@ function res(v, depth = 0, dark = null) {
     const bare = ref.replace(/^(colors\.)?semantic\./, '');
     val = dark[bare] ?? dark[ref];
   }
+  // A ref resolves by its real path only. `all` already holds every leaf both bare and
+  // stem-namespaced, so `{colors.semantic.x}` and `{semantic.x}` both hit directly. The old
+  // fallback dropped ANY first segment and retried, which let `{dataviz.…}` resolve for a file
+  // called data-viz.json — and would let `{anything.x}` resolve for `x` (2.2.0, B3b).
   if (val === undefined) val = all[ref];
-  if (val === undefined) { const tail = ref.split('.').slice(1).join('.'); val = all[ref] ?? all[tail]; }
   return val === undefined ? v : res(val, depth + 1, dark);
 }
 

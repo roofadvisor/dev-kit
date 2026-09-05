@@ -34,8 +34,8 @@
 
   "semantic": {
     "$description": "Outcome-coded series (gains vs. losses). Distinct from feedback tokens so charts theme independently.",
-    "positive": { "$type": "color", "$value": "{dataviz.diverging.positive-strong}" },
-    "negative": { "$type": "color", "$value": "{dataviz.diverging.negative-strong}" },
+    "positive": { "$type": "color", "$value": "{data-viz.diverging.positive-strong}" },
+    "negative": { "$type": "color", "$value": "{data-viz.diverging.negative-strong}" },
     "neutral": { "$type": "color", "$value": "#64748B" }
   },
 

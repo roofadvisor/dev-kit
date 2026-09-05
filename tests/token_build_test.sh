@@ -118,5 +118,26 @@ has "B2: --space-stack-md emits"                   "$css" "--space-stack-md:"
 has "B2: --space-component-button-padding-x emits" "$css" "--space-component-button-padding-x:"
 node "$B" --in "$KIT/kit/tokens" --out /dev/null --strict >/dev/null 2>&1; check "B2: the kit's own tokens are --strict clean" 0 $?
 
+# ---------- B3b: a ref resolves by its real path, never by dropping a first segment ----------
+# `{nope.ink.900}` used to resolve: both resolvers stripped any first segment and retried, and
+# validate_tokens then matched any key ENDING in the ref. That is how `{dataviz.…}` passed for a
+# file called data-viz.json.
+D="$(fixture)"
+python3 - "$D/colors.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d["semantic"]["text"]["primary"]["$value"] = "{nope.ink.900}"
+json.dump(d, open(p, "w"))
+PY
+python3 "$KIT/kit/scripts/validate_tokens.py" "$D" >/dev/null 2>&1; check "B3b: validate_tokens rejects a ref through a namespace that is not a file" 1 $?
+css=$(node "$B" --in "$D" 2>/dev/null)
+hasnt "B3b: the builder does not emit a value reached through a fake namespace" "$css" "--color-text-primary:"
+rm -rf "$D"
+
+# ---------- B3: the typo the rule now rejects, fixed at the source ----------
+python3 "$KIT/kit/scripts/validate_tokens.py" "$KIT/kit/tokens" >/dev/null 2>&1; check "B3: the kit's own tokens resolve" 0 $?
+css=$(node "$B" --in "$KIT/kit/tokens" 2>/dev/null)
+has "B3: --color-chart-positive emits from the corrected ref" "$css" "--color-chart-positive:"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

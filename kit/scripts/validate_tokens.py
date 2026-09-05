@@ -102,12 +102,11 @@ def main(argv=()):
                     norm = norm[3:] if norm.startswith("../") else norm[2:]
                 if ref in all_tokens or norm in all_tokens:
                     continue
-                # tolerate cross-file refs that omit the file prefix
-                tail = norm.split(".", 1)[-1]
-                if tail in all_tokens:
-                    continue
-                if any(k.endswith(norm) for k in all_tokens):
-                    continue
+                # A ref resolves by its real path only. all_tokens already holds every leaf
+                # both bare and stem-namespaced, so a cross-file ref works with or without its
+                # file prefix. The old fallbacks dropped any first segment, then matched any
+                # key ENDING in the ref — which is how {dataviz.…} passed for data-viz.json
+                # (2.2.0, B3b).
                 unresolved.append(f"{f.name}: {path} → {{{ref}}} (unresolved)")
 
     print(f"Parsed {len(parsed)}/{len(files)} token files, {len(all_tokens)//2} tokens defined.")
