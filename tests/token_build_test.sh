@@ -141,5 +141,12 @@ python3 "$KIT/kit/scripts/validate_tokens.py" "$KIT/kit/tokens" >/dev/null 2>&1;
 css=$(node "$B" --in "$KIT/kit/tokens" 2>/dev/null)
 has "B3: --color-chart-positive emits from the corrected ref" "$css" "--color-chart-positive:"
 
+# ---------- the single-file seed builds at parity with the directory (spec §4.4a) ----------
+# A scaffolded project starts from one file. A literal merge of kit/tokens/*.json builds 70 of
+# 320 variables; the seed is the one shape that builds them all, and --check proves it stays so.
+node "$KIT/kit/scripts/make_single_file_tokens.mjs" --check >/dev/null 2>&1; check "seed: current, --strict clean, at parity with kit/tokens" 0 $?
+python3 "$KIT/kit/scripts/validate_tokens.py"   "$KIT/templates/scaffold/design-tokens.json" >/dev/null 2>&1; check "seed: every alias resolves" 0 $?
+python3 "$KIT/kit/scripts/validate_contrast.py" "$KIT/templates/scaffold/design-tokens.json" >/dev/null 2>&1; check "seed: WCAG pairs pass" 0 $?
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

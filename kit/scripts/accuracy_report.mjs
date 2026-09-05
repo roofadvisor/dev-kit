@@ -25,6 +25,11 @@ const checks = [
   // the explicit path makes the set self-contained, so an unresolved alias FAILS
   // (the argless default only warns)
   ['Token JSON valid + aliases resolve', 'python3 scripts/validate_tokens.py tokens'],
+  // The single-file seed a scaffolded project starts from: current, and at parity with tokens/.
+  // Commands run with cwd = kit/, so the seed is ../templates/scaffold/…
+  ['Single-file seed is current and builds at parity with tokens/', 'node scripts/make_single_file_tokens.mjs --check'],
+  ['Single-file seed — aliases resolve', 'python3 scripts/validate_tokens.py ../templates/scaffold/design-tokens.json'],
+  ['Single-file seed — WCAG contrast', 'python3 scripts/validate_contrast.py ../templates/scaffold/design-tokens.json'],
   ['WCAG contrast — token pairs (light + dark)', 'python3 scripts/validate_contrast.py'],
   ['Component specs complete (anatomy/variants/states/tokens/a11y)', 'python3 scripts/validate_component_spec.py'],
   ['No hardcoded values (hex/px/ms/Tailwind/font) — golden', 'python3 scripts/lint_hardcodes.py examples/golden'],
