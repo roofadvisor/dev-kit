@@ -14,7 +14,8 @@ machine could find it without a human having installed Claude Code first.
   was *designed* to print `SKIPPED` on a bare runner.
 - **Three resolvers answered one question.** `scripts/_common.py`, the inline `node -e` fragment
   the scaffold-spec copied into every project, and roof-club's own `devkit-path.sh` — already
-  different code.
+  different code. (The last is reduced, not deleted: fourteen commands call it, so it now prints
+  the fixed path or fails naming `npm ci`.)
 - **Fourteen gate scripts were copied into every project's `.github/scripts/`**, drifting the
   same way, with `framework-upgrade` existing partly to re-sync them.
 - **Single-file token mode had never worked.** `project-init` said "seed `design-tokens.json`
@@ -63,7 +64,23 @@ right for its premises:
 - `node_modules` grows by about 1 MB in every consumer.
 - Gates resolve the kit through the pin; skills resolve it through the plugin install. A project
   can be pinned to 2.2.0 while a developer's plugin is newer; the gate result is the pinned one.
-- A project with no `package.json` keeps the registry fragment and its honest `SKIPPED` until a
-  dependency route exists for it.
+- A project with no `package.json` keeps the registry fragment (below) and its honest `SKIPPED`
+  until a dependency route exists for it.
 - The scanners skip dot-directories, so a forgotten `.github/scripts/` copy is invisible to
   them; the assertion in `gates.yml` is load-bearing.
+
+## The registry fragment, for a project with no `package.json`
+
+A project that cannot take a dependency keeps the pre-2.2.0 design-gate line, verbatim,
+appended after `&&` in `CLAUDE.md`'s verify block, the verify target, and
+`templates/scaffold/verify.yml.tmpl`'s `run: |` step alike (a block scalar: the line's
+`echo "…: …"` carries a `: ` a plain YAML scalar cannot). It finds the plugin through
+`$CLAUDE_PLUGIN_ROOT` when a plugin hook set it, else through Claude Code's own registry —
+`~/.claude/plugins/installed_plugins.json`, or `$CLAUDE_CONFIG_DIR`'s — runs the plugin's
+self-check, and prints `design gate: SKIPPED …` with exit 0 when neither resolves: a skipped
+gate is not a passed gate, and it says so. One line, no breaks — the `node -e` argument does
+not survive one.
+
+```sh
+&& { if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then node "${CLAUDE_PLUGIN_ROOT}/kit/scripts/accuracy_report.mjs"; else R="$(node -e 'const fs=require("fs"),p=require("path"),os=require("os");let r="";try{const c=process.env.CLAUDE_CONFIG_DIR||p.join(os.homedir(),".claude");const j=JSON.parse(fs.readFileSync(p.join(c,"plugins","installed_plugins.json"),"utf8"));const nm=Object.keys(j.plugins||{}).find(nm=>nm.startsWith("dev-kit@"));const es=nm?j.plugins[nm]:[];const e=es.find(x=>x.scope==="user")||es[0];if(e&&e.installPath)r=e.installPath}catch(e){}process.stdout.write(r)' 2>/dev/null)"; if [ -n "$R" ] && [ -f "$R/kit/scripts/accuracy_report.mjs" ]; then node "$R/kit/scripts/accuracy_report.mjs"; else echo "design gate: SKIPPED — dev-kit plugin not found (no CLAUDE_PLUGIN_ROOT, and no dev-kit@* entry with a valid kit/ in installed_plugins.json); a skipped gate is not a passed gate"; fi; fi; }
+```

@@ -153,7 +153,7 @@ design job would mean vendoring the engine plus Playwright into every project. B
 correct for their premises, and the premises changed: a declared dependency needs no resolver,
 and the token gate needs no browser. `docs/decisions/005-kit-as-a-dependency.md` records both
 rationales and the change. A project with no `package.json` cannot take a dependency and keeps
-the earlier fragment, from that ADR.
+the registry fragment, from that ADR.
 
 ## Toolchain pins
 
