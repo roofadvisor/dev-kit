@@ -74,6 +74,27 @@ gates on `bundles` being non-empty **or** any `design-*` module existing in
 audited correctly from the modules this step just copied in, with no
 declaration step to remember or skip.
 
+**Kit as a devDependency (2.2.0).** Gates used to find the plugin through Claude
+Code's registry — an inline `node -e` fragment in the verify command, or a
+project's own resolver script — and the registry gates were copies under
+`.github/scripts/`. Both are replaced by one pinned dependency (ADR 005). In order:
+
+1. `package.json` → `devDependencies["@roofadvisor/dev-kit"] = "github:roofadvisor/dev-kit#v<version>"`,
+   the version this plugin reports in `installed_plugins.json`; then `npm ci`.
+2. Every gate command that resolved the kit now uses
+   `node_modules/@roofadvisor/dev-kit/kit`: replace the resolver fragment, or reduce the
+   project's resolver script to printing that path (keep the script if other commands
+   call it — count them before deleting).
+3. Delete `.github/scripts/check_*.py` and `.github/scripts/render_instructions.py`
+   (`notion_sync.py` may stay), then re-copy `templates/github/gates.yml`, which runs
+   the gates from `node_modules` and fails while copies remain. Verify:
+   `! ls .github/scripts/check_*.py`.
+4. Confirm the CI setup step runs `npm ci` (`verify.yml`'s `{{SETUP_CMDS}}`).
+5. Run the project verify. An upgrade that breaks verify is not done.
+
+A project with no `package.json` cannot take a dependency; it keeps the registry
+fragment and its honest `SKIPPED`, and this migration does not apply to it.
+
 ## After applying
 
 1. Run the project verify command. An upgrade that breaks verify is not done.

@@ -27,7 +27,7 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 section "harnesses"
 total=0
-for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release; do
+for t in hooks render_registry render_instructions gate_trio statelessness conformance companions scanner_agreement agent_presence notion_sync token_build release relocation; do
   # Harnesses are self-contained fixtures — gate_trio_test.sh in particular
   # asserts BOTH check_commits/check_test_count behaviors, "BASE_REF set" and
   # "BASE_REF unset", inside its own disposable repos. CI never leaks BASE_REF

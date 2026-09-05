@@ -2,20 +2,18 @@ name: gates
 # Rule-registry gates. These FAIL the build — they are not advisory.
 # Each job names the rule IDs it enforces so a failure is traceable to REGISTRY.md.
 #
-# Deliberately no design job here. accuracy_report.mjs (`/gate`) only ever
-# tests the PLUGIN's own kit/ tokens and example harnesses — its KIT_ROOT is
-# hardcoded to its own directory, never to this project's design-tokens.json
-# or src/components/ — and it needs ${CLAUDE_PLUGIN_ROOT} plus a Playwright
-# install, neither of which exists on a bare Actions runner. Making a design
-# job here work for real would mean vendoring kit/'s scripts, tokens, and
-# example harnesses into every scaffolded project's CI checkout — the
-# copy-the-engine-into-every-project model this merge retired on purpose. The
-# design gate instead runs from the project's own verify command (see
-# skills/project-init/references/scaffold-spec.md § "Verify command by
-# stack"), which a human or agent invokes from inside a Claude Code session
-# where ${CLAUDE_PLUGIN_ROOT} genuinely resolves — including automatically
-# via ship-it step 1. That command guards itself and skips honestly (not
-# silently) when that precondition isn't met, which is exactly this runner.
+# The gate scripts run from node_modules/@roofadvisor/dev-kit/scripts — the kit is a
+# devDependency pinned to a release tag (dev-kit ADR 005), so `npm ci` below is what puts
+# them here, and they are never copied into this repository. A leftover copy under
+# .github/scripts/ fails this job on purpose: the scanners skip dot-directories, so a
+# forgotten copy would otherwise run stale while this job ran current, and nothing would
+# say so.
+#
+# Deliberately no design job here. The design gate — validate_tokens, validate_contrast,
+# build_tokens --strict, lint_hardcodes — is part of this project's own verify command
+# (skills/project-init/references/scaffold-spec.md § "Verify command by stack") and runs
+# for real in verify.yml from the same node_modules. The render gates (measure_render,
+# axe) still need Playwright and Chromium and stay out of CI.
 
 on:
   pull_request:
@@ -34,7 +32,17 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      # A7: one checkout, one python setup, all five checks. Five separate jobs
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - name: Install the kit (a pinned devDependency)
+        run: npm ci
+      - name: No vendored gate copies may remain
+        run: |
+          if ls .github/scripts/check_*.py >/dev/null 2>&1; then
+            echo "::error::.github/scripts/ still holds vendored gate copies. The kit is a dependency now — delete them (framework-upgrade: kit as a devDependency, 2.2.0)."
+            exit 1
+          fi
+      # A7: one checkout, one python setup, all checks. Five separate jobs
       # spent more time on setup-python than on the checks themselves.
       # Each check reports its own rule IDs; the job fails if any fails.
       - name: Run all registry gates
@@ -47,7 +55,7 @@ jobs:
           fail=0
           run() {
             echo "::group::$1"
-            python ".github/scripts/$1" || fail=1
+            python "node_modules/@roofadvisor/dev-kit/scripts/$1" || fail=1
             echo "::endgroup::"
           }
           BASE_REF=origin/${{ github.base_ref }} \
