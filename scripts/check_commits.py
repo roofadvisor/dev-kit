@@ -4,7 +4,7 @@ C-06 — conventional commits, enforced.
 
 Validates every commit subject in the PR range against the conventional format:
 
-  type(scope)!: subject      type ∈ feat fix docs chore refactor perf test build ci style revert
+  type(scope)!: subject      type ∈ feat fix docs chore refactor perf test build ci style revert release
 
 Range comes from $BASE_REF (CI passes origin/<base branch>) as BASE..HEAD.
 Auto-generated `Merge ...` and `Revert "..."` subjects are skipped.
@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 
-TYPES = "feat|fix|docs|chore|refactor|perf|test|build|ci|style|revert"
+TYPES = "feat|fix|docs|chore|refactor|perf|test|build|ci|style|revert|release"
 PATTERN = re.compile(rf"^({TYPES})(\([a-z0-9._/-]+\))?!?: \S.*")
 SKIP = re.compile(r'^(Merge |Revert ")')
 MAX_LEN = 100

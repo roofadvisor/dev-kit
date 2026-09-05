@@ -40,6 +40,10 @@ changes.
   against vendoring, against a CI design job — as reasoning that was right for its
   premises. A consumer end-to-end job installs the kit on a bare runner from a git ref
   and runs the scaffolded gate, so the install path itself is under test.
+- **C-06 admits `release`.** The commit gate had never run on this repository's own pull
+  requests; the first time it did, it rejected `release:` — the type the three release
+  commits before this one carry. The type is admitted, here and in every project that runs
+  the gate from `node_modules`.
 
 Upgrading a project: `framework-upgrade` → *kit as a devDependency (2.2.0)*. Upgrading
 the plugin: `claude plugin update dev-kit@roofadvisor`.
