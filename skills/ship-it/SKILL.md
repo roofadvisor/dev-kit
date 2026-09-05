@@ -66,8 +66,9 @@ Push and PR creation are hard to walk back. Run them only on an explicit yes.
   `bash tests/release_test.sh` — it fails if they disagree. The plugin updater compares
   version strings, not commits, and consumers pin the tag below; a release with only one
   field bumped reaches neither.
-- Tag after merge, never before, and only on explicit confirmation — on the release
-  commit once it is on `main`:
+- Tag after merge, never before, and only on explicit confirmation — on `main`'s tip
+  once the release commit has landed there (a fix that follows the release commit ships
+  in the tag too):
   `git tag -a v<X.Y.Z> -m "release: <X.Y.Z> — <title>" <release commit> && git push origin v<X.Y.Z>`.
   A consumer's `"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v<X.Y.Z>"` resolves only
   after this push.

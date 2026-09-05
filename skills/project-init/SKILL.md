@@ -228,7 +228,7 @@ Read `references/scaffold-spec.md` for exact file contents and layout. At entry 
    - Prove it with the project's **own** authoring gate — the exact command step 9
      writes into `verify`, from the kit `npm ci` installs (ADR 005):
      ```sh
-     K=node_modules/@roofadvisor/dev-kit/kit
+     K=${KIT:-node_modules/@roofadvisor/dev-kit/kit}
      [ -f "$K/scripts/build_tokens.mjs" ] || { echo "dev-kit is not installed — run: npm ci"; exit 1; }
      python3 "$K/scripts/validate_tokens.py" design-tokens.json
      python3 "$K/scripts/validate_contrast.py" design-tokens.json
@@ -271,10 +271,12 @@ Read `references/scaffold-spec.md` for exact file contents and layout. At entry 
    - Single-instance project → `docker-compose.yml`, and ADR 002 recording that choice with its reversal cost.
 9. `verify` script in `package.json` and/or `Makefile`. For a Node project, also add
    `"@roofadvisor/dev-kit": "github:roofadvisor/dev-kit#v<version>"` to `devDependencies` — the
-   version this plugin reports in `installed_plugins.json` — and run `npm ci`: every design and
-   registry gate runs from `node_modules/@roofadvisor/dev-kit` (ADR 005), and fails naming
-   `npm ci` when it is absent. A project with no `package.json` keeps the registry fragment
-   in the scaffold-spec and its honest `SKIPPED`.
+   version this plugin reports in `installed_plugins.json` —
+   `npm install -D "github:roofadvisor/dev-kit#v<version>"` writes the entry and the lock
+   (`npm ci`, for CI and `verify`, refuses a lock that does not yet know the package):
+   every design and registry gate runs from `node_modules/@roofadvisor/dev-kit` (ADR 005),
+   and fails naming `npm ci` when it is absent. A project with no `package.json` keeps
+   the registry fragment in the scaffold-spec and its honest `SKIPPED`.
 10. `.github/workflows/` — `verify.yml`, always, rendered from `${CLAUDE_PLUGIN_ROOT}/templates/scaffold/verify.yml.tmpl` (fill `{{DB_NAME}}`, `{{SETUP_CMDS}}`, `{{VERIFY}}` — same token-fill pattern as `CLAUDE.md.tmpl` in step 2 — so the workflow runs the command step 9 established). `{{SETUP_CMDS}}` is `npm ci` for a Node project (plus `npx playwright install --with-deps chromium` only when the verify command runs render gates): it is the line that puts the kit on the runner, which is what lets the design gate inside `{{VERIFY}}` run for real there rather than skip. If the org profile has `claude_github_app: installed` and `notion_work_db` set, also copy `claude.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/claude.yml`, `claude-code-review.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/claude-code-review.yml`, and `notion-sync.yml` from `${CLAUDE_PLUGIN_ROOT}/templates/github/notion-sync.yml`; then copy `scripts/notion_sync.py` to `.github/scripts/`.
    Also write `.github/ISSUE_TEMPLATE/bug.yml` and `feature.yml` — structured enough that `@claude` can act on a report directly.
 11. **Process layer** — always, regardless of project size:

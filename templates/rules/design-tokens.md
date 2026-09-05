@@ -157,9 +157,11 @@ a 50-screen product visually identical and themeable from one place.
 3. **Real WCAG, on the source** — the token theme itself passes WCAG 2.2 in
    both light and dark before any page ships. Enforced by
    `validate_contrast.py`.
-4. **One gate runs all of it** — `/gate` (or
-   `node "${CLAUDE_PLUGIN_ROOT}/kit/scripts/accuracy_report.mjs"`) bundles
-   token, contrast, and hardcode validation so nothing merges on drift.
+4. **One gate runs all of it** — the project's own `verify` runs
+   `validate_tokens`, `validate_contrast`, `build_tokens --strict` and
+   `lint_hardcodes` from `node_modules/@roofadvisor/dev-kit/kit`
+   (project-init step 7a), so nothing merges on drift. `/gate` is the
+   plugin's self-check; it never tests a project.
 
 Switching brand or theme means editing the token source once and letting
 every page update. If a page "looks different," it bypassed the theme — that

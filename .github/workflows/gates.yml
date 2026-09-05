@@ -5,9 +5,10 @@ name: gates
 # check_test_count.py in particular had NEVER run here, because both need
 # BASE_REF and only CI supplies it.
 #
-# Note the path difference from templates/github/gates.yml: scaffolded repos get
-# the checks copied to .github/scripts/, but this repo IS the source, so they run
-# from scripts/.
+# Note the path difference from templates/github/gates.yml: scaffolded repos run
+# the checks from node_modules/@roofadvisor/dev-kit/scripts (a pinned
+# devDependency, ADR 005), but this repo IS the source, so they run from
+# scripts/.
 
 on:
   pull_request:

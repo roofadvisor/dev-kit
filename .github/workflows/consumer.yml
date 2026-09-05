@@ -9,6 +9,9 @@ on:
     branches: ['**']
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   consumer:
     name: "a scaffolded project's gates, from node_modules, on a bare runner"
@@ -41,7 +44,7 @@ jobs:
           mkdir -p src/components
           # lint_hardcodes refuses an empty directory; a scaffolded project has its worked example here
           printf '.btn { color: var(--color-text-primary); padding: var(--space-3); }\n' > src/components/Button.css
-          K=node_modules/@roofadvisor/dev-kit/kit
+          K=${KIT:-node_modules/@roofadvisor/dev-kit/kit}
           [ -f "$K/scripts/build_tokens.mjs" ] || { echo "dev-kit is not installed — run: npm ci"; exit 1; }
           python3 "$K/scripts/validate_tokens.py" design-tokens.json
           python3 "$K/scripts/validate_contrast.py" design-tokens.json

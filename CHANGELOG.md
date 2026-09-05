@@ -35,7 +35,9 @@ changes.
   segment, which let `{dataviz.…}` pass for `data-viz.json`; a ref now resolves by its
   real path only, and the typo is fixed. `package.json`'s version had drifted from
   `plugin.json`'s; `tests/release_test.sh` fails when they disagree, and also when the
-  plugin's own CI runs fewer harnesses than `verify.sh` — it ran seven of eleven.
+  plugin's own CI runs fewer harnesses than `verify.sh` — it ran seven of eleven. And a
+  colour tier now covers only the leaves the colour emitter wrote: a `dimension` under
+  `semantic` in `colors.json` used to vanish under `--strict` without a word.
 - **Recorded and tested.** ADR 005 supersedes the scaffold-spec's two rationales —
   against vendoring, against a CI design job — as reasoning that was right for its
   premises. A consumer end-to-end job installs the kit on a bare runner from a git ref
@@ -44,6 +46,9 @@ changes.
   requests; the first time it did, it rejected `release:` — the type the three release
   commits before this one carry. The type is admitted, here and in every project that runs
   the gate from `node_modules`.
+- **Templates hardened.** `gates.yml` reads the PR body through `env:` instead of
+  splicing it into the script, installs with `npm ci --ignore-scripts`, and the
+  scaffolded gate honours `KIT=` as the spec promised.
 
 Upgrading a project: `framework-upgrade` → *kit as a devDependency (2.2.0)*. Upgrading
 the plugin: `claude plugin update dev-kit@roofadvisor`.

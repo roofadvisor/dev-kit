@@ -94,7 +94,8 @@ checks below — they are available immediately.
 - Render the view (`render_registry.py`) and then, for every held row claiming `HOOK`, `TEST`, or `GATE` — overrides included: **confirm that check actually exists and runs.** A manifest asserting enforcement that is not wired is worse than none — it makes the gap invisible.
 - For every held row marked `PROSE` with a promote-when trigger: has the trigger fired? List those. That list is the promotion backlog.
 - Run each gate script directly and report pass/fail:
-  `python3 .github/scripts/check_fixtures.py`, `check_contract_pin.py`, `check_guess_lists.py`
+  `python3 node_modules/@roofadvisor/dev-kit/scripts/check_fixtures.py`, `check_contract_pin.py`, `check_guess_lists.py` — from the pinned devDependency (ADR 005), never from a copy
+- A `.github/scripts/check_*.py` still present is a finding: since 2.2.0 the kit is a dependency and `gates.yml` fails while copies remain (framework-upgrade: *Kit as a devDependency (2.2.0)*). So is a `package.json` whose verify or CI runs a design or registry gate with no `@roofadvisor/dev-kit` in `devDependencies`.
 
 **Verify integrity**
 - A single verify command exists
@@ -109,7 +110,7 @@ checks below — they are available immediately.
 - Conversely: any module present for something the repo does not do? Remove it — dead rules cost context on every turn.
 
 **Statelessness** — only meaningful for multi-instance projects; check first whether it is one
-- Run `python3 .github/scripts/check_statelessness.py`
+- Run `python3 node_modules/@roofadvisor/dev-kit/scripts/check_statelessness.py`
 - Does the local stack run **two** instances? If it runs one, every ST-* bug in this repo is currently invisible and no amount of testing will surface it.
 - Do migrations run at app boot? That is a deploy-time race, not a startup convenience.
 - Is there at least one test that writes on one instance and reads on another?

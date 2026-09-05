@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: 'npm' }
       - name: Install the kit (a pinned devDependency)
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: No vendored gate copies may remain
         run: |
           if ls .github/scripts/check_*.py >/dev/null 2>&1; then
@@ -47,6 +47,8 @@ jobs:
       # Each check reports its own rule IDs; the job fails if any fails.
       - name: Run all registry gates
         env:
+          BASE_REF: origin/${{ github.base_ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           FIXTURE_MAX_AGE_DAYS: '90'
           # A8: written by the scaffolder from the interview answer. A gate that
           # fires wrongly gets disabled, and a disabled gate protects nothing.
@@ -58,25 +60,18 @@ jobs:
             python "node_modules/@roofadvisor/dev-kit/scripts/$1" || fail=1
             echo "::endgroup::"
           }
-          BASE_REF=origin/${{ github.base_ref }} \
-          PR_BODY="${{ github.event.pull_request.body }}" \
-            run check_fixtures.py      # I-02 I-03 G-05
+          run check_fixtures.py      # I-02 I-03 G-05
           run check_contract_pin.py    # K-02 K-03
           run check_guess_lists.py     # S-05
-          BASE_REF=origin/${{ github.base_ref }} \
-          PR_BODY="${{ github.event.pull_request.body }}" \
-            run check_rollback.py      # O-02 O-03 D-05
+          run check_rollback.py      # O-02 O-03 D-05
           run check_statelessness.py   # ST-01..ST-07
-          BASE_REF=origin/${{ github.base_ref }} \
-            run check_commits.py       # C-06
+          run check_commits.py       # C-06
           run check_raw_sql.py         # D-06
           run check_pure_imports.py    # S-07
           run check_catch_empty.py     # S-03
           run check_log_hygiene.py     # O-05
           run check_instruction_honesty.py  # C-10
-          BASE_REF=origin/${{ github.base_ref }} \
-          PR_BODY="${{ github.event.pull_request.body }}" \
-            run check_test_count.py    # C-08
+          run check_test_count.py    # C-08
           exit $fail
 
   hooks:

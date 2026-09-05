@@ -22,4 +22,4 @@ Stand up the *foundation* (one token system everything renders from) before any 
 - `python3 ${CLAUDE_PLUGIN_ROOT}/kit/scripts/validate_theme_refs.py` — every component `var(--…)` resolves to the theme.
 - One theme, no per-page palettes; destructive = danger token (not primary); zero hardcoded values.
 
-> Output is a verified token foundation — the measurable part is provable (run `node ${CLAUDE_PLUGIN_ROOT}/kit/scripts/accuracy_report.mjs`; this repo's `npm run verify` covers type/tests/build only, not the design gates). Brand "feel" still benefits from a human review against `${CLAUDE_PLUGIN_ROOT}/kit/taste/design-taste.md`.
+> Output is a verified token foundation — the measurable part is provable (run the project's own gate — `validate_tokens`, `validate_contrast`, `build_tokens --strict`, `lint_hardcodes` from `node_modules/@roofadvisor/dev-kit/kit`, project-init step 7a; `accuracy_report.mjs` is the plugin's self-check and never tests a project). Brand "feel" still benefits from a human review against `${CLAUDE_PLUGIN_ROOT}/kit/taste/design-taste.md`.

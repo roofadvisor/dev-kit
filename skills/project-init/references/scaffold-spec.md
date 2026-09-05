@@ -133,13 +133,17 @@ skip. Appended after `&&`, as `&&`-chained commands, identically in `CLAUDE.md`,
 script, and `templates/scaffold/verify.yml.tmpl`'s `run:` step:
 
 ```sh
-&& K=node_modules/@roofadvisor/dev-kit/kit \
+&& K=${KIT:-node_modules/@roofadvisor/dev-kit/kit} \
 && { [ -f "$K/scripts/build_tokens.mjs" ] || { echo "dev-kit is not installed — run: npm ci"; exit 1; }; } \
 && python3 "$K/scripts/validate_tokens.py" design-tokens.json \
 && python3 "$K/scripts/validate_contrast.py" design-tokens.json \
 && node "$K/scripts/build_tokens.mjs" --in design-tokens.json --out src/theme.css --strict \
 && python3 "$K/scripts/lint_hardcodes.py" src/components
 ```
+
+In `package.json` the same commands are one JSON string: drop the `\`-newlines and keep the
+`&&`s — a script value cannot carry a line continuation. `KIT=` overrides the path for a test
+or a checkout of the plugin itself.
 
 It is the project's own gate — validity, contrast, `--strict` unmapped groups, hardcodes — not
 the plugin's self-check. It fails, and names the fix, when the kit is absent; it runs for real
