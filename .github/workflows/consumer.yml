@@ -1,0 +1,62 @@
+name: consumer
+# A bare runner installs the kit the way a project does — npm ci from a git ref, no plugin, no
+# Claude Code — and runs a scaffolded project's exact authoring gate against the shipped seed,
+# then one registry gate the way gates.yml runs it. This is the job that proves the install path
+# itself, not just the scripts: `files` scoping a real git install, and a runner with no SSH key
+# fetching over https (spec: Assumptions on record).
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  consumer:
+    name: "a scaffolded project's gates, from node_modules, on a bare runner"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Scaffold a consumer and install the kit at this commit
+        run: |
+          mkdir consumer && cd consumer
+          git init -q && npm init -y >/dev/null
+          npm install --no-audit --no-fund "github:roofadvisor/dev-kit#${{ github.sha }}"
+          P=node_modules/@roofadvisor/dev-kit
+          test -f "$P/kit/scripts/build_tokens.mjs"
+          test -f "$P/scripts/check_log_hygiene.py"
+          test -f "$P/.claude-plugin/plugin.json"
+          # files: scoped the install — the repo's skills/, templates/, tests/ must not be here
+          ! test -e "$P/skills"
+          ! test -e "$P/templates"
+          du -sh "$P"
+
+      - name: Run the exact authoring gate project-init writes (step 7a)
+        run: |
+          cd consumer
+          cp "$GITHUB_WORKSPACE/templates/scaffold/design-tokens.json" design-tokens.json
+          mkdir -p src/components
+          # lint_hardcodes refuses an empty directory; a scaffolded project has its worked example here
+          printf '.btn { color: var(--color-text-primary); padding: var(--space-3); }\n' > src/components/Button.css
+          K=node_modules/@roofadvisor/dev-kit/kit
+          [ -f "$K/scripts/build_tokens.mjs" ] || { echo "dev-kit is not installed — run: npm ci"; exit 1; }
+          python3 "$K/scripts/validate_tokens.py" design-tokens.json
+          python3 "$K/scripts/validate_contrast.py" design-tokens.json
+          node "$K/scripts/build_tokens.mjs" --in design-tokens.json --out src/theme.css --strict
+          python3 "$K/scripts/lint_hardcodes.py" src/components
+
+      - name: Parity with the directory build
+        run: |
+          want=$(node kit/scripts/build_tokens.mjs --in kit/tokens 2>/dev/null | grep -c '^  --')
+          got=$(grep -c '^  --' consumer/src/theme.css)
+          echo "directory build: $want lines   seed build: $got lines"
+          [ "$want" = "$got" ]
+
+      - name: One registry gate, from node_modules, the way gates.yml runs it
+        run: |
+          cd consumer
+          ! ls .github/scripts/check_*.py >/dev/null 2>&1
+          python node_modules/@roofadvisor/dev-kit/scripts/check_log_hygiene.py
