@@ -1563,7 +1563,7 @@ Create `.github/workflows/consumer.yml`:
 
 ```yaml
 name: consumer
-# A bare runner installs the kit the way a project does — npm ci from a git ref, no plugin, no
+# A bare runner installs the kit the way a project does — npm install from a git ref, no plugin, no
 # Claude Code — and runs a scaffolded project's exact authoring gate against the shipped seed,
 # then one registry gate the way gates.yml runs it. This is the job that proves the install path
 # itself, not just the scripts: `files` scoping a real git install, and a runner with no SSH key
@@ -1594,8 +1594,8 @@ jobs:
           test -f "$P/scripts/check_log_hygiene.py"
           test -f "$P/.claude-plugin/plugin.json"
           # files: scoped the install — the repo's skills/, templates/, tests/ must not be here
-          ! test -e "$P/skills"
-          ! test -e "$P/templates"
+          if test -e "$P/skills";    then echo "::error::files leaked skills/ into the package";    exit 1; fi
+          if test -e "$P/templates"; then echo "::error::files leaked templates/ into the package"; exit 1; fi
           du -sh "$P"
 
       - name: Run the exact authoring gate project-init writes (step 7a)
@@ -1622,7 +1622,7 @@ jobs:
       - name: One registry gate, from node_modules, the way gates.yml runs it
         run: |
           cd consumer
-          ! ls .github/scripts/check_*.py >/dev/null 2>&1
+          if ls .github/scripts/check_*.py >/dev/null 2>&1; then echo "::error::vendored gate copies present"; exit 1; fi
           python node_modules/@roofadvisor/dev-kit/scripts/check_log_hygiene.py
 ```
 
@@ -1642,7 +1642,7 @@ observed here for the first time.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push
-sleep 90
+gh run watch "$(gh run list --workflow consumer --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
 gh run list --workflow consumer --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 1 --json status,conclusion,url --jq '.[0]'
 ```
 
