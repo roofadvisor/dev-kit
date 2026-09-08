@@ -1246,7 +1246,9 @@ project's own resolver script — and the registry gates were copies under
 `.github/scripts/`. Both are replaced by one pinned dependency (ADR 005). In order:
 
 1. `package.json` → `devDependencies["@roofadvisor/dev-kit"] = "github:roofadvisor/dev-kit#v<version>"`,
-   the version this plugin reports in `installed_plugins.json`; then `npm ci`.
+   the version this plugin reports in `installed_plugins.json` — `npm install -D
+   "github:roofadvisor/dev-kit#v<version>"` writes both the entry and the lock; `npm ci`
+   refuses a lock that does not yet know the package and is for CI and `verify`.
 2. Every gate command that resolved the kit now uses
    `node_modules/@roofadvisor/dev-kit/kit`: replace the resolver fragment, or reduce the
    project's resolver script to printing that path (keep the script if other commands
