@@ -185,6 +185,19 @@ check "allows .keys() dict access"         0 guard.sh '{"tool_input":{"command":
 check "allows a .keyboard property"        0 guard.sh '{"tool_input":{"command":"echo $cfg.keyboard.layout"}}'
 check "still blocks a real .key file"      2 guard.sh '{"tool_input":{"command":"cat server.key"}}'
 check "still blocks .key mid-command"      2 guard.sh '{"tool_input":{"command":"cat tls.key && echo done"}}'
+# 1b. The same arm, the other half of the same mistake. Anchoring on what
+#     follows fixed the identifier that KEEPS GOING; a property access ENDS
+#     exactly where an extension ends, so `d.key },` denied — and `grep
+#     keystore` denied the search for the cause, the way a bare TRUNCATE once
+#     did. A path or a reading verb is the second signal.
+check "allows a .key property access"      0 guard.sh '{"tool_input":{"command":"node -e \"return { ...d, ...d.key }\""}}'
+check "allows .key in a jq filter"         0 guard.sh '{"tool_input":{"command":"jq \".rows[].key\" data.json"}}'
+check "allows .key before a comma"         0 guard.sh '{"tool_input":{"command":"python3 -c \"print(d.key, 1)\""}}'
+check "allows grep for the word keystore"  0 guard.sh '{"tool_input":{"command":"grep -n keystore tests/hooks_test.sh"}}'
+check "blocks a .key under a directory"    2 guard.sh '{"tool_input":{"command":"less certs/site.key"}}'
+check "blocks a keystore directory"        2 guard.sh '{"tool_input":{"command":"cat keystore/release"}}'
+check "blocks a .keystore file"            2 guard.sh '{"tool_input":{"command":"cp app.keystore /tmp/x"}}'
+check "a bare .key path is never safe"     2 guard.sh '{"tool_input":{"file_path":"/x/site.key"}}'
 # 2. Shell control flow was not in the dotenv allowlist, so a loop that only
 #    read .gitignore denied because the word .env appeared in it as a pattern.
 check "allows a for loop over safe verbs"  0 guard.sh '{"tool_input":{"command":"for p in a b; do grep -c KEY .env; done"}}'

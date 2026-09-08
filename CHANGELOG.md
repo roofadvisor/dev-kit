@@ -53,6 +53,12 @@ changes.
 - **Templates hardened.** `gates.yml` reads the PR body through `env:` instead of
   splicing it into the script, installs with `npm ci --ignore-scripts`, and the
   scaffolded gate honours `KIT=` as the spec promised.
+- **C-01 stops denying `d.key`.** The key-material guard read a property access as a
+  filename, so `d.key },`, a `.rows[].key` jq filter and a `grep` for the word
+  `keystore` were all blocked as key material — the last of them while someone was
+  looking for the cause. `.key` now needs a second signal, a path or a verb that would
+  read the file, the way C-03 needs one for a bare `TRUNCATE`. `id_rsa`, `.pem`,
+  `credentials.json` and any `file_path` still deny on sight.
 
 Upgrading a project: `framework-upgrade` → *kit as a devDependency (2.2.0)*. Upgrading
 the plugin: `claude plugin update dev-kit@roofadvisor`.

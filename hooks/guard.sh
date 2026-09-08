@@ -201,17 +201,87 @@ if [[ "$scrubbed" =~ (^|[^A-Za-z0-9_])(sk-[A-Za-z0-9]{12,}|sk-proj-|sk-live-|sk-
 fi
 shopt -s nocasematch
 
+# `.key` and `keystore` are file markers and ordinary code at the same time —
+# a property access, a jq filter, an English word. Anchoring `.key` on what
+# FOLLOWS it fixed the identifier that KEEPS GOING (`list(d.keys())`,
+# `$cfg.keyboard`), but a property access ENDS exactly where an extension ends,
+# so `d.key },` and `jq '.rows[].key'` denied too, and `grep keystore` denied
+# the search for the cause — the story C-03 tells about a bare TRUNCATE.
+#
+# The `.env` anchor above cannot be borrowed: a dotenv file has nothing before
+# its dot, so an identifier there proves a property. A key file always has
+# something before its dot, which makes `server.key` and `d.key` the same
+# shape. The token alone can never decide.
+#
+# So two signals, the way C-03 takes two: the marker is referenced, AND either
+# it sits in a path or the command carries a verb that would put the file's
+# bytes into this transcript or into another file. `ls`, `test -f` and `stat`
+# are not such verbs — the dotenv arm above already calls them safe, for the
+# case that guards actual values.
+#
+# Known gap, stated rather than hidden: an interpreter that opens the file
+# itself — `python3 -c "open('site.key').read()"` — carries neither signal.
+# The names that only ever mean key material (`id_rsa`, `.pem`,
+# `credentials.json`) still deny on any mention below, and a bare file_path is
+# always strict, which is the route a Read or an Edit would take.
+keyref=""
+case "$scrubbed" in
+  # A path or an extension, never the bare word.
+  *"keystore/"*|*"/keystore"*|*".keystore"*) keyref=1 ;;
+  *".key"|*".key"[!A-Za-z0-9_]*) keyref=2 ;;
+esac
+if [ "$keyref" = 2 ]; then
+  keyref=""
+  # A path: the slash and the extension in one token, no whitespace between.
+  # `scripts/x.py -c 'print(d.key)'` has a slash and a `.key`, but not in the
+  # same word, and that is the whole difference.
+  [[ "$scrubbed" =~ /[^[:space:]]*\.key([^A-Za-z0-9_]|$) ]] && keyref=1
+  # Or a verb that reads the file out, or puts its bytes somewhere they persist.
+  # Judged in VERB POSITION and case-sensitively, both learned the hard way on
+  # this fix's own commit: `git push origin HEAD` matched `head` when the list
+  # was applied to the whole line under nocasematch. The verb of that command
+  # is `git`.
+  if [ -z "$keyref" ]; then
+    seps=${scrubbed//&&/$'\n'}; seps=${seps//||/$'\n'}
+    seps=${seps//;/$'\n'};      seps=${seps//|/$'\n'}
+    shopt -u nocasematch
+    while IFS= read -r seg; do
+      seg=${seg#"${seg%%[![:space:]]*}"}
+      # Control-flow keywords are transparent, not permitted — the dotenv arm
+      # above has the measurement that made that necessary.
+      while :; do
+        w=${seg%%[[:space:]]*}
+        case "$w" in
+          for|case) seg=""; break ;;
+          do|done|then|else|elif|fi|esac|if|while|until|'{'|'}')
+              rest=${seg#"$w"}; rest=${rest#"${rest%%[![:space:]]*}"}
+              [ -z "$rest" ] && { seg=""; break; }
+              seg=$rest ;;
+          *)  break ;;
+        esac
+      done
+      [ -z "$seg" ] && continue
+      verb=${seg%%[[:space:]]*}; verb=${verb##*/}
+      case "$verb" in
+        cat|tac|bat|less|more|head|tail|nl|strings|xxd|od|base64|cp|mv|scp|rsync|install|tar|zip|curl|openssl|ssh-keygen|ssh-add|gpg|keytool|certutil)
+            keyref=1; break ;;
+      esac
+    done <<< "$seps"
+    shopt -s nocasematch
+  fi
+  # Read dumps the file and an Edit payload carries its content, so a bare path
+  # is never safe — the same branch the dotenv arm relies on.
+  [ -n "$via_path" ] && keyref=1
+fi
+[ -n "$keyref" ] && deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript."
+
 case "$scrubbed" in
   # Key material, unlike a dotenv file, has no safe read: any mention denies.
   # It is also rare in ordinary work, so the strictness costs nothing.
   *"id_rsa"*|*".pem"*|*"credentials.json"*)
       deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript." ;;
-  # `.key` anchored on what FOLLOWS it, the mirror of the `.env` anchor above.
-  # Unanchored it denied `list(d.keys())` and `$cfg.keyboard` — dictionary access
-  # and a property name, neither of them secrets. A real key file ends at the
-  # extension or hits a separator; an identifier keeps going. Found when this
-  # guard blocked a /project-audit run twice on read-only work.
-  *"keystore"*|*"mnemonic"*|*"seed phrase"*|*".key"|*".key"[!A-Za-z0-9_]*)
+  # Unambiguous crypto terms: no ordinary-code reading, so no second signal.
+  *"mnemonic"*|*"seed phrase"*)
       deny "C-01" "key material is off-limits." ;;
   *"PRIVATE_KEY"*|*"SECRET_KEY"*|*"_TOKEN="*|*"API_KEY="*)
       deny "C-01" "never interpolate a credential into a command. Reference the env var by name." ;;
