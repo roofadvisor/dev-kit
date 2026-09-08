@@ -28,7 +28,7 @@ changes.
   `templates/scaffold/design-tokens.json`, and `/gate` proves it builds at parity with
   the directory on every plugin change. A scaffolded project gets its **own** authoring
   gate — validity, contrast, `--strict`, hardcodes — not the plugin's self-check.
-- **Four bugs the investigation found, fixed together.** 2.1.0's unmapped-group report
+- **Five bugs the investigation found, fixed together.** 2.1.0's unmapped-group report
   claimed the colour tiers by bare name, so any file's top-level `semantic` read as
   covered — `spacing.semantic`'s 30 tokens hid behind it and now emit (`--space-stack-md`,
   `--space-page-inline-padding`, …). Both resolvers accepted a ref by dropping its first
@@ -37,7 +37,11 @@ changes.
   `plugin.json`'s; `tests/release_test.sh` fails when they disagree, and also when the
   plugin's own CI runs fewer harnesses than `verify.sh` — it ran seven of eleven. And a
   colour tier now covers only the leaves the colour emitter wrote: a `dimension` under
-  `semantic` in `colors.json` used to vanish under `--strict` without a word.
+  `semantic` in `colors.json` used to vanish under `--strict` without a word. That check
+  immediately found a fifth: a colour is one by its `$type`, not by how its value is
+  spelled, and a `^(#|rgb|hsl)` test had been dropping `component.button.ghost-bg:
+  transparent` since the tier was written. It emits now, light and dark — and so will the
+  `oklch(…)` ramps the token skill tells authors to generate.
 - **Recorded and tested.** ADR 005 supersedes the scaffold-spec's two rationales —
   against vendoring, against a CI design job — as reasoning that was right for its
   premises. A consumer end-to-end job installs the kit on a bare runner from a git ref

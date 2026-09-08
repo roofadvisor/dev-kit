@@ -162,5 +162,9 @@ has "a dimension under a colour tier is reported as unmapped" "$out" "colors.sem
 node "$B" --in "$D" --out "$D/out.css" --strict >/dev/null 2>&1; check "--strict refuses a colour tier hiding a non-colour token" 1 $?
 rm -rf "$D"
 
+# A colour is a colour by its $type, not by how its value is spelled. `transparent` matched no
+# value-shape test, so component.button.ghost-bg had never emitted — found by the check above.
+has "a keyword colour emits" "$(node "$B" --in "$KIT/kit/tokens")" "--color-button-ghost-bg: transparent;"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

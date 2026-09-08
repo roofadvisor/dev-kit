@@ -85,7 +85,11 @@ function emit(obj, prefix, bucket, dark = null, path = '') {
     if (k.startsWith('$')) continue;
     if (v && typeof v === 'object' && '$value' in v) {
       const hex = res(v.$value, 0, dark);
-      if (typeof hex === 'string' && /^(#|rgb|hsl)/.test(hex)) {
+      // `$type` says whether this is a colour; the value's spelling does not. A `^(#|rgb|hsl)`
+      // test dropped `transparent` — and would drop `oklch(…)`, which the token skill tells
+      // authors to generate — while a `dimension` under a colour tier is not a colour however
+      // it is spelled. A value still carrying braces did not resolve; never emit that.
+      if (v.$type === 'color' && typeof hex === 'string' && !hex.startsWith('{')) {
         lines[bucket].push(`  --color-${prefix}${k}: ${hex};`);
         emittedColour.add(`${path}${k}`);
       }
