@@ -104,6 +104,16 @@ check "allows import.meta.env"             0 guard.sh '{"tool_input":{"command":
 check "still blocks a real .env read"      2 guard.sh '{"tool_input":{"command":"cat .env"}}'
 check "still blocks .env after a slash"    2 guard.sh '{"tool_input":{"command":"cat ./config/.env"}}'
 check "blocks .env even beside a property" 2 guard.sh '{"tool_input":{"command":"node -e \"process.env.X\" && cat .env"}}'
+# The anchor above reads an identifier before the dot as "this is a property". A rest-spread
+# puts a DOT there — `{ KIT, ...env }` — so the arm fired and denied an ordinary destructure,
+# which is what it did to the command that found this. A dotenv path never has a dot
+# immediately before the name; `../.env` and `./.env` have a slash, and `..env` is a
+# different file. So: a dot before it is never a dotenv reference.
+check "allows a rest-spread named env"     0 guard.sh '{"tool_input":{"command":"node -e \"const { KIT, ...env } = process.env\""}}'
+check "allows a spread in an object"       0 guard.sh '{"tool_input":{"command":"node -e \"const o = { ...env, PATH: 1 }\""}}'
+check "still blocks ../.env"               2 guard.sh '{"tool_input":{"command":"cat ../.env"}}'
+check "still blocks ./.env"                2 guard.sh '{"tool_input":{"command":"cat ./.env"}}'
+check "still blocks ../../.env"            2 guard.sh '{"tool_input":{"command":"cat ../../.env"}}'
 
 # C-01, second pass: the question is whether a VALUE reaches the transcript, not
 # whether a filename appears. Reading a dotenv file out loud leaks; checking that

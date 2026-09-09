@@ -1,6 +1,6 @@
 {
   "name": "dev-kit",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Development and design framework: interview-driven scaffolding, composable rules modules, safety hooks, audit agents, DTCG design tokens, component specs, and WCAG verification gates.",
   "author": {
     "name": "RoofAdvisor"

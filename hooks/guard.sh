@@ -81,13 +81,21 @@ fi
 # print it? The reference test is anchored so a property access (preceded by an
 # identifier character) is not a filename.
 #
+# A DOT is excluded from that anchor too, and for the same reason one character
+# further along: `const { KIT, ...env } = process.env` is a rest-spread, and the
+# spread's third dot sits exactly where the anchor expected a separator, so an
+# ordinary destructure denied as a dotenv read — including the one that found
+# this. A dotenv path never carries a dot immediately before the name: `./.env`
+# and `../.env` end in a slash, and `..env` is a different file. The cases below
+# hold both halves.
+#
 # Known imprecision: `case` globbing cannot prove the reader verb TARGETS the
 # dotenv file, only that both appear. `cat README.md && test -f .env` therefore
 # denies. That fails safe, it is rare, and the alternative is a shell parser in
 # a hook that has to stay fast and dependency-free.
 envref=""
 case "$scrubbed" in
-  ".env"*|*[!A-Za-z0-9_]".env"*) envref=1 ;;
+  ".env"*|*[!A-Za-z0-9_.]".env"*) envref=1 ;;
 esac
 if [ -n "$envref" ]; then
   # ALLOWLIST, not a denylist. A previous revision listed the verbs that print a

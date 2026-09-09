@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.2.1 — C-01 stops reading a spread as a filename
+
+The third false positive of one shape in as many days, and the one that blocked the
+search for the other two.
+
+- **`...env` is a rest-spread, not a dotenv file.** The dotenv arm decided "filename or
+  property?" by the character before the dot: an identifier means `process.env`, anything
+  else means a path. A spread puts a **dot** there, so `const { KIT, ...env } =
+  process.env` denied as a secrets read, and so did a `grep` that went looking for the
+  cause. A dot before the name is now never a dotenv reference: `./.env` and `../.env` end
+  in a slash, and `..env` is a different file. Every path shape still denies, checked
+  across fourteen of them.
+
+Same disease as 2.2.0's `.key` fix, in the arm beside it, and the same lesson: these rules
+decide from one character of context, so each new spelling of ordinary code finds the next
+gap. The arm labels that release added are what made this one attributable.
+
 ## 2.2.0 — the kit is a dependency
 
 Every design gate a project can run needs the plugin's `kit/`, and until now nothing
