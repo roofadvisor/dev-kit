@@ -26,10 +26,14 @@ if [ -z "$cmd" ] && [ -n "$input" ]; then
 fi
 [ -z "$cmd" ] && exit 0
 
-# deny <rule-id> <message>. If a deny ever needs the id UNREGISTERED, that is
-# a registry-honesty gap: give the rule a row (IDs are permanent, A9) before
+# deny <rule-id> <message> [arm]. If a deny ever needs the id UNREGISTERED, that
+# is a registry-honesty gap: give the rule a row (IDs are permanent, A9) before
 # shipping the deny — the fire report flags UNREGISTERED loudly for a reason.
-deny() { log_deny "$1" "$cmd"; echo "BLOCKED by dev-kit [$1]: $2" >&2; exit 2; }
+#
+# The arm names WHICH branch of the rule fired. For a secret-class rule it is
+# the only telemetry there is, because the command itself is withheld
+# (hooks/_parse.sh). Always a fixed label chosen here, never anything from $cmd.
+deny() { log_deny "$1" "$cmd" "${3-}"; echo "BLOCKED by dev-kit [$1]: $2" >&2; exit 2; }
 
 shopt -s nocasematch
 
@@ -172,7 +176,7 @@ if [ -n "$envref" ]; then
   # safe. This branch survived the review's bypass attempts intact.
   [ -n "$via_path" ] && safe=""
 
-  [ -z "$safe" ] && deny "C-01" "that would expose the file's values — printing them here, or copying them somewhere they can be read or committed. Safe: test -f, ls, wc, stat, cut -d= -f1 for key names, grep -c/-q/-l, sed -i, and cp/mv to a .env* name. Reference a value as \$VAR."
+  [ -z "$safe" ] && deny "C-01" "that would expose the file's values — printing them here, or copying them somewhere they can be read or committed. Safe: test -f, ls, wc, stat, cut -d= -f1 for key names, grep -c/-q/-l, sed -i, and cp/mv to a .env* name. Reference a value as \$VAR." "dotenv"
 fi
 
 # Credential literals by issuer shape. The named-assignment arm below only
@@ -197,7 +201,7 @@ fi
 shopt -u nocasematch
 if [[ "$scrubbed" =~ (^|[^A-Za-z0-9_])(sk-[A-Za-z0-9]{12,}|sk-proj-|sk-live-|sk-test-|sk_live_|sk_test_|rk_live_|pk_live_|ghp_[A-Za-z0-9]{8,}|gho_[A-Za-z0-9]{8,}|ghs_[A-Za-z0-9]{8,}|ghu_[A-Za-z0-9]{8,}|github_pat_|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{12,}|ASIA[A-Z0-9]{12,}|shpat_[a-f0-9]{16,}|hf_[A-Za-z0-9]{20,}|-----BEGIN[ A-Z]*PRIVATE\ KEY) ]]; then
   shopt -s nocasematch
-  deny "C-01" "that is a credential literal sitting in the command text, where this transcript keeps it. Put the value in your shell or a dotenv file and reference it as \$VAR."
+  deny "C-01" "that is a credential literal sitting in the command text, where this transcript keeps it. Put the value in your shell or a dotenv file and reference it as \$VAR." "literal"
 fi
 shopt -s nocasematch
 
@@ -273,33 +277,33 @@ if [ "$keyref" = 2 ]; then
   # is never safe — the same branch the dotenv arm relies on.
   [ -n "$via_path" ] && keyref=1
 fi
-[ -n "$keyref" ] && deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript."
+[ -n "$keyref" ] && deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript." "key-file"
 
 case "$scrubbed" in
   # Key material, unlike a dotenv file, has no safe read: any mention denies.
   # It is also rare in ordinary work, so the strictness costs nothing.
   *"id_rsa"*|*".pem"*|*"credentials.json"*)
-      deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript." ;;
+      deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript." "key-name" ;;
   # Unambiguous crypto terms: no ordinary-code reading, so no second signal.
   *"mnemonic"*|*"seed phrase"*)
-      deny "C-01" "key material is off-limits." ;;
+      deny "C-01" "key material is off-limits." "crypto-term" ;;
   *"PRIVATE_KEY"*|*"SECRET_KEY"*|*"_TOKEN="*|*"API_KEY="*)
-      deny "C-01" "never interpolate a credential into a command. Reference the env var by name." ;;
+      deny "C-01" "never interpolate a credential into a command. Reference the env var by name." "env-assign" ;;
   # (Credential literals by issuer shape are matched below, with a regex —
   #  glob patterns cannot express "followed by a long token", which is what
   #  separates a real key from a word that merely starts the same way.)
   # The flag itself, terminal or followed by whitespace — not every flag that
   # merely starts with it (`--broadcast-mode=off` broadcasts nothing).
   *"--broadcast"|*"--broadcast"[[:space:]]*)
-      deny "KS-01" "no transaction broadcasting from an agent session. Use anvil or a fork." ;;
+      deny "KS-01" "no transaction broadcasting from an agent session. Use anvil or a fork." "broadcast" ;;
   # An endpoint or a network selection, not the word. `cat docs/mainnet.md` and
   # a commit message about the mainnet launch are not RPC calls.
   *"infura.io"*|*"alchemy.com"*|*"polygon-rpc.com"*|*"://"*"mainnet"*)
-      deny "KS-02" "no mainnet RPC in an agent session. Use a local or forked chain." ;;
+      deny "KS-02" "no mainnet RPC in an agent session. Use a local or forked chain." "rpc-host" ;;
   *"--network mainnet"*|*"--network=mainnet"*|*"--chain mainnet"*|*"--chain=mainnet"*)
-      deny "KS-02" "no mainnet RPC in an agent session. Use a local or forked chain." ;;
+      deny "KS-02" "no mainnet RPC in an agent session. Use a local or forked chain." "network-flag" ;;
   *"--rpc-url"*"mainnet"*|*"--fork-url"*"mainnet"*)
-      deny "KS-02" "no mainnet RPC in an agent session. Use a local or forked chain." ;;
+      deny "KS-02" "no mainnet RPC in an agent session. Use a local or forked chain." "rpc-url" ;;
   # Root and home themselves — terminal, or with a following argument or glob.
   # `rm -rf /` as a bare substring also denies `rm -rf /tmp/scratch`, which is
   # exactly where a session is told to put its scratch work.

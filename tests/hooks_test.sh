@@ -713,6 +713,35 @@ elif [ "$(printf '%s\n' "$loglines" | grep -c "withheld — secret-class deny")"
   echo "  PASS  secret-class denies withhold the detail entirely"; pass=$((pass+1))
 else echo "  FAIL  withhold marker missing (log: $loglines)"; fail=$((fail+1)); fi
 
+# 5b. WHICH ARM fired is telemetry, not a secret. Without it a C-01 line says
+#     only "a secret-class rule denied something", and 147 of the 165 denies
+#     logged in this repo over six days were C-01 with no way to tell a real
+#     block from a false positive. The label is a fixed string from guard.sh,
+#     never anything derived from the command.
+et6=$(mktemp -d); ( cd "$et6" && git init -q ); mkstate "$et6"
+armcase() { # arm  command
+  echo "{\"tool_input\":{\"command\":$2}}" | (cd "$et6" && bash "$HOOKS/guard.sh" >/dev/null 2>&1)
+  local got; got=$(tail -1 "$et6/.claude/.enforcement-log")
+  if printf '%s' "$got" | grep -qF "secret-class deny: $1]"; then
+    echo "  PASS  arm logged: $1"; pass=$((pass+1))
+  else echo "  FAIL  arm $1 not logged (got: $got)"; fail=$((fail+1)); fi
+}
+armcase key-file   '"cat server.key"'
+armcase key-name   '"cat cert.pem"'
+armcase dotenv     '"cat .env"'
+armcase literal    '"deploy --key sk-live-ABCDEFGHIJKL"'
+armcase env-assign '"run API_KEY=$FOO"'
+armcase rpc-host   '"cast call --rpc-url https://polygon-rpc.com"'
+# The arm must not become a channel for the command it withholds.
+if grep -qE 'secret-class deny: [a-z-]+\]$' "$et6/.claude/.enforcement-log" \
+   && ! grep -qE 'sk-live|polygon-rpc|server\.key' "$et6/.claude/.enforcement-log"; then
+  echo "  PASS  arm labels are fixed strings, no command text"; pass=$((pass+1))
+else echo "  FAIL  an arm label carried command text"; fail=$((fail+1)); fi
+# Three columns exactly — session_report.py counts anything else as malformed.
+if [ "$(awk -F'\t' 'NF!=3' "$et6/.claude/.enforcement-log" | wc -l | tr -d ' ')" = 0 ]; then
+  echo "  PASS  arm stays inside the detail column"; pass=$((pass+1))
+else echo "  FAIL  arm broke the three-column format"; fail=$((fail+1)); fi
+
 # 6. Non-secret-class denies keep a redacted detail (defense in depth).
 #    (MY_PASSWORD= is redaction-regex material but NOT a C-01 pattern, so the
 #    command routes to the force-push branch — C-02, non-withheld.)

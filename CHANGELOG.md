@@ -59,6 +59,14 @@ changes.
   looking for the cause. `.key` now needs a second signal, a path or a verb that would
   read the file, the way C-03 needs one for a bare `TRUNCATE`. `id_rsa`, `.pem`,
   `credentials.json` and any `file_path` still deny on sight.
+- **A deny says which arm fired.** A secret-class rule withholds the command, which is
+  right, but it left every C-01 line reading the same: 147 of the 165 denials logged in
+  this repo over six days were C-01, spread across six arms, and nothing distinguished a
+  real block from a false positive afterwards. Each deny now carries a fixed label —
+  `key-file`, `dotenv`, `literal`, `env-assign`, `key-name`, `crypto-term`, and the three
+  KS-02 arms — inside the withheld marker, so the log keeps its three columns, and
+  `/retro`'s fire report breaks the counts down by arm. The label never carries command
+  text.
 
 Upgrading a project: `framework-upgrade` → *kit as a devDependency (2.2.0)*. Upgrading
 the plugin: `claude plugin update dev-kit@roofadvisor`.

@@ -56,7 +56,7 @@ hook_parse_failed() {
 # path returns 0 — an unwritable log must never weaken a deny, and a deny must
 # never be delayed waiting on telemetry. The guard blocks; the log is a bonus.
 log_deny() {
-  local rule="$1" detail="${2-}"
+  local rule="$1" detail="${2-}" arm="${3-}"
   local root
   root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   mkdir -p "$root/.claude" 2>/dev/null || return 0
@@ -66,8 +66,15 @@ log_deny() {
   # shapes, so for these rules the detail is withheld entirely; the rule id and
   # timestamp are the telemetry. For every other rule, assignment-shaped values
   # are redacted as defense in depth.
+  # WHICH ARM fired is not a secret, and withholding it made a real block and a
+  # false positive look identical in the log — 147 of the 165 denies recorded
+  # here in six days were C-01, across six different arms, with no way to tell
+  # them apart afterwards. The label is a fixed string chosen at the deny site,
+  # never anything derived from the command, and it stays inside this column so
+  # the log keeps its three fields (session_report.py counts a fourth as
+  # malformed).
   case "$rule" in
-    C-01|KS-01|KS-02) detail="[withheld — secret-class deny]" ;;
+    C-01|KS-01|KS-02) detail="[withheld — secret-class deny${arm:+: $arm}]" ;;
     *)
       detail=$(printf '%s' "$detail" \
         | sed -E 's/([A-Za-z_]*(KEY|TOKEN|SECRET|PASS(WORD)?|MNEMONIC|CREDENTIAL)[A-Za-z_]*[[:space:]]*=)[^[:space:]]+/\1[REDACTED]/Ig' \

@@ -10,6 +10,7 @@ This exists because "observe for a week and then decide" is not something an
 agent can do. Every session starts blank. The observation has to be written down.
 """
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -110,19 +111,30 @@ def fire_report(path=".claude/.enforcement-log"):
         print("ENFORCEMENT FIRES    no log yet — zero denies recorded (or hooks predate 1.17.0)")
         print()
         return
-    counts, malformed, first, last = Counter(), 0, None, None
+    counts, arms, malformed, first, last = Counter(), Counter(), 0, None, None
     for line in open(path, encoding="utf-8", errors="replace"):
         parts = line.rstrip("\n").split("\t")
         if len(parts) != 3 or not parts[0]:
             malformed += 1
             continue
         counts[parts[1]] += 1
+        # A secret-class rule withholds the command, so a real block and a false
+        # positive read identically at the rule level — 147 of 165 denies here
+        # were C-01, across six arms. The arm label is the only way to tell them
+        # apart afterwards, and it is a fixed string, never command text.
+        arm = re.search(r"secret-class deny: ([a-z-]+)\]", parts[2])
+        if arm:
+            arms[f"{parts[1]}/{arm.group(1)}"] += 1
         first = first or parts[0]
         last = parts[0]
     print(f"ENFORCEMENT FIRES    {sum(counts.values())} denies, {first} .. {last}")
     for rule, n in counts.most_common():
         note = "  <- registry holds no row for this deny (honesty gap)" if rule == "UNREGISTERED" else ""
         print(f"  {rule:<14} {n}{note}")
+    if arms:
+        print("  which arm fired (the command is withheld for these rules; the arm is not)")
+        for arm, n in arms.most_common():
+            print(f"    {arm:<26} {n}")
     if malformed:
         print(f"  (malformed lines skipped: {malformed} — the log is telemetry, not a ledger, but say so)")
     print()
