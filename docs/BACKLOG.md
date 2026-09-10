@@ -1150,6 +1150,79 @@ ST-10..12 (statelessness) · I-06 (idempotent ingestion)
 
 ---
 
+### A27 — a doc-link gate is proposed; the measurement says fix two documents first · open · effort S to measure, M to build
+
+**Where it came from.** The GHL-MCP convergence session filed
+roofadvisor/GHL-MCP#1413: `apps/operator-ui/content/operator-documentation.json`
+links to a heading that does not exist, GitHub silently lands the reader at the
+top of the file, and the link had been dead since it was written. Their proposal
+was a checker in this plugin rather than per repo — resolve every relative doc
+link and `#anchor`, baseline the known-dead, fail on a new one, baseline only
+shrinks. The argument for the plugin is now stronger than they knew: since 2.2.0
+the registry gates ship as an npm dependency, so a fourteenth `check_*.py`
+reaches every consumer through `npm ci`. One correction to their premise — the
+ratchet they cite (`style-debt.json`, retired-surfaces) lives in GHL-MCP, not
+here. This kit has no doc rule and no `link` row in REGISTRY.md.
+
+**What the fleet actually holds.** Markdown links only, read through
+`git show origin/main:<path>` rather than off disk, with percent-encoding
+decoded, `path/file.ts:73` line references stripped, and links inside code
+fences excluded:
+
+| repo | links | dead file | dead anchor |
+|---|---|---|---|
+| GHL-MCP | 196 | 59 | 1 |
+| roof-club | 483 | 2 | 3 |
+| AR-AP | 5 | 0 | 0 |
+| design-kit | 37 | 1 | 0 |
+
+Plus the reported one, which lives in JSON and no markdown scan reaches: five
+dead anchors in total, across roughly 720 links and about 9 repo-months of
+documentation.
+
+**The dead files are two documents, not a fleet problem.** 48 of GHL-MCP's 59
+are one spec (`2026-07-10-result-integrity-error-surfacing-design.md`) pointing
+at `src/ghl/planning/…` paths that moved when the repo restructured under
+`apps/operator-ui/`. A baseline would freeze that as accepted debt rather than
+provoke the repoint, which inverts what a ratchet is for. Fix the document and
+about 80% of every finding in the fleet goes with it.
+
+**The case against building it yet is the false-positive rate, and the evidence
+is this investigation.** Three separate measurements were wrong before one was
+right, each in a way a shipped gate would reproduce:
+
+1. A rate was quoted from a stock with no denominator in time. Dated properly
+   against each repo's documentation age it is ~1.6 dead anchors per
+   repo-quarter fleet-wide, and roughly four in roof-club, which is the active
+   repo. Higher than first claimed, still low in absolute terms.
+2. The first scan read the working tree and found 138 dead links in
+   `kit/taste/aesthetic-systems.md`. That file is correct in every committed
+   revision; the 138 were an **uncommitted, staged modification** in this repo's
+   stale main checkout, reverting 131 upstream URLs to relative paths. A gate
+   that reads the working tree rather than the revision under review would fire
+   on a colleague's desk state.
+3. Extending the scan to JSON — which is where the reported defect lives —
+   matched DTCG token references (`{radius.md}`) and any prose string containing
+   a filename, including this repo's own `hooks.json` comment. Every one of
+   those lands on the honest path.
+
+So an honest gate needs: revision-scoped reads, percent-decoding, line-reference
+handling, fence exclusion, and a JSON mode that distinguishes an href from a
+token reference. That is the same shape as C-01, which produced four false
+positives in three days this week, each found only by blocking real work.
+
+**Recommended order.** Repoint the two stale documents; leave the reported
+anchor to whoever knows what the imports row-resolution work became, since
+repointing it somewhere it also is not would be worse than leaving it; then
+re-measure. If dead links regenerate against healthy documents, the gate is
+earned and the second measurement names which false positives it must handle.
+If they do not, the fix was the documents.
+
+**Registry consequence if built:** a new rule row before any deny, per A9 —
+IDs are permanent, and this kit treats an unregistered deny as an honesty gap.
+
+---
+
 ## 4 — Opportunities (not defects)
 
 | ID | Item | Value |
