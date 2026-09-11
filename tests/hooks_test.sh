@@ -238,6 +238,25 @@ echo "# plan" > "$tmp/docs/superpowers/plans/2026-09-04-kit-as-a-dependency.md"
 check "still blocks a -v2 of the plan" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/docs/superpowers/plans/2026-09-04-kit-as-a-dependency-v2.md\"}}"
 check "still blocks a -v2 of the spec" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/docs/superpowers/specs/2026-09-04-kit-as-a-dependency-design-v2.md\"}}"
 
+# Every case above creates its file in the fixture root, so none ever reached the repo-wide
+# fallback, which only runs when the target DIRECTORY holds no match — always true of a new
+# one. There it inverted the rule: a fresh file in a fresh folder was judged a duplicate of
+# every same-named file anywhere. route.ts, page.tsx, README.md and index.ts are one per
+# directory by convention, so no new Next.js route or page could be written (GHL-MCP: 143
+# route.ts, 31 page.tsx). A plain name is suspicious only beside itself; a VARIANT — one that
+# carried an iteration suffix — stays suspicious wherever its base lives.
+mkdir -p "$tmp/app/api/existing" "$tmp/app/existing" "$tmp/lib/existing" "$tmp/docs/guides"
+touch "$tmp/app/api/existing/route.ts" "$tmp/app/existing/page.tsx" "$tmp/lib/existing/index.ts" "$tmp/docs/guides/README.md"
+( cd "$tmp" && git add app lib docs/guides/README.md )
+check "allows route.ts in a new directory"   0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/app/api/brand-new/route.ts\"}}"
+check "allows page.tsx in a new directory"   0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/app/brand-new/page.tsx\"}}"
+check "allows index.ts in a new directory"   0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/lib/new-area/index.ts\"}}"
+check "allows README.md in a new directory"  0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/docs/archive/batch-1/README.md\"}}"
+# ...and what the repo-wide search exists for must survive: report.ts lives in the fixture
+# root, so a reportV2 created in an unrelated new directory is still a variant of it.
+check "still blocks a variant in a new directory"  2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/src/elsewhere/reportV2.ts\"}}"
+check "still blocks a -final in a new directory"   2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/src/elsewhere/report-final.ts\"}}"
+
 echo "session-context.sh"
 # G-02: the load-path fix is the most load-bearing hook in the system and had no test.
 sc_out=$(cd "$tmp" && bash "$HOOKS/session-context.sh" 2>&1)

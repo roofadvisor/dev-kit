@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.2 — Rule 0 stops blocking the first file in a new folder
+
+Found in GHL-MCP by a session archiving dead code, which could not write a per-batch
+`README.md`. The same logic refused every new Next.js `route.ts` and `page.tsx`.
+
+- **A plain name is suspicious only beside itself.** Rule 0 searches the target
+  directory for an existing file of the same concept, and fell back to searching the
+  whole repository whenever that directory held no match — which is always true of a
+  new directory. So the first file of its kind in a fresh folder was judged a duplicate
+  of every same-named file anywhere. Replaying the hook against GHL-MCP's full file
+  list: before this release, 2,675 of its 2,677 distinct filenames would be refused if
+  created in a new directory; after it, 39.
+- **What the repo-wide search is for still works.** It now runs only for a *variant* — a
+  name that carried an iteration suffix or prefix, like `reportV2`, `report-final` or
+  `new-report` — which is evidence the author meant another one of those. `reportV2.ts`
+  created in an unrelated new folder is still refused while `report.ts` lives elsewhere.
+
+**Known and left alone:** most of the 39 that remain are the rule doing its job
+(`dedupeV2.ts`, `mainReportFixed.ts`, `incomingDraft.ts`). About thirty are not: the
+suffix pattern reads any trailing number as a version, so a dated audit, a font weight
+or a phase number looks like a variant, and `new-worktree.sh` looks exactly like
+`new-report.ts`. A trial narrowing got 39 down to only 29, because those names are
+lexically identical to real variants. That wants its own design, not a fold-in.
+
 ## 2.2.1 — C-01 stops reading a spread as a filename
 
 The third false positive of one shape in as many days, and the one that blocked the

@@ -35,9 +35,21 @@ concept=$(printf '%s' "$stem" \
 [ "$concept" = "$stem" ] && [ "${#concept}" -ge 3 ] && concept="$stem"
 [ -z "$concept" ] && exit 0
 
-# Look for an existing file expressing the same concept, in this dir and nearby.
+# Look for an existing file expressing the same concept. In this directory, always: a
+# second file of one concept beside the first is the case this rule exists for.
 matches=$(find "$dir" -maxdepth 1 -type f -iname "*${concept}*.${ext}" 2>/dev/null | head -5)
-[ -z "$matches" ] && matches=$(git -C "$root" ls-files "*${concept}*.${ext}" 2>/dev/null | head -5)
+
+# Across the repo, only for a VARIANT — a name that carried an iteration suffix or prefix
+# (reportV2, report-final, new-report), which is evidence the author meant "another one of
+# those". A plain name repeated in a new directory is how frameworks are laid out: route.ts,
+# page.tsx, README.md and index.ts are one per directory by convention. This fallback used to
+# run for every name whenever the target directory held no match — which is always, for a new
+# directory — so it judged the first file of its kind in a fresh folder a duplicate of every
+# same-named file anywhere, and no new Next.js route or page could be written (2.2.2). The
+# evidence is the suffix, not the name, which is the same two-signal shape C-01 and C-03 use.
+if [ -z "$matches" ] && [ "$concept" != "$stem" ]; then
+  matches=$(git -C "$root" ls-files "*${concept}*.${ext}" 2>/dev/null | head -5)
+fi
 
 # A spec and its plan share a stem by convention — writing-plans puts them at
 # docs/superpowers/specs/<x>-design.md and docs/superpowers/plans/<x>.md. That is two
