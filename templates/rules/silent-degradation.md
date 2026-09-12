@@ -13,6 +13,21 @@ looks plausible, so it reads as data rather than as a defect.
 - An unknown enum value renders visibly blocked. It never silently maps to the first option, "other", or null.
 - If a value cannot be resolved, the caller learns that. It does not receive a plausible substitute.
 
+## Alarm on the path that consumes the value
+
+The rule above says the caller learns. It does not say *where*, and putting the alarm where
+the value is computed rather than where it is used turns a detector into noise.
+
+- **A non-resolution is only news on a path that needed the value.** Compute a signal for
+  every case if that is simplest, but report its absence only where something depended on it.
+- **A warning that fires on the healthy path is worse than no warning**, because it teaches
+  the reader that this warning means nothing — and it will still be meaningless on the day
+  the drift is real. Measured: an editor resolved seven opportunity-only keys on every entity
+  and logged seven "not in catalog" lines per open on three of four entity types. Both the
+  author and the reviewer learned to scroll past it.
+- The question to ask of any new alarm: **on which inputs is this silent?** If the answer is
+  "the ones where the value is actually used", the alarm is inverted.
+
 ## catch → empty is a trap
 
 - `catch { return [] }` does not merely hide a failure — it **passes every downstream "is anything missing?" check**, because nothing is missing from an empty set.
