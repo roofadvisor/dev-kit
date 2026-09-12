@@ -1,5 +1,5 @@
 name: verify
-# Path filters: docs-only changes must not pay the full gate.
+# Path filters: docs-only changes must not pay the full gate (O-06).
 on:
   push:
     branches: [main]
@@ -9,22 +9,48 @@ on:
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
       - 'LICENSE'
+
+# A run the next push supersedes is stale the moment it is superseded, and on a private
+# repository it is billed anyway. Cancel it rather than pay for an answer nobody reads.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Without this a hung step bills until the six-hour default.
+    timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16-alpine
+        # The major your PRODUCTION database runs, not the newest. A different major
+        # proves the wrong thing, and the difference then surfaces in production rather
+        # than here — which is the one place this job exists to prevent it.
+        image: postgres:{{PG_MAJOR}}
         env:
           POSTGRES_USER: dev
           POSTGRES_PASSWORD: dev
           POSTGRES_DB: {{DB_NAME}}
+        # -U matters: bare pg_isready reports ready before the role exists, so the first
+        # connection can still be refused.
         options: >-
-          --health-cmd pg_isready --health-interval 5s --health-retries 10
+          --health-cmd "pg_isready -U dev" --health-interval 5s --health-retries 10
         ports: ["5432:5432"]
+    env:
+      DATABASE_URL: postgresql://dev:dev@localhost:5432/{{DB_NAME}}
+      # The kit's render gates SKIP when no browser is present, and a skipped gate reads
+      # as a passed one. Fifteen kit scripts honour this flag; with it set, a runner that
+      # cannot render fails loudly instead of reporting green on nothing. {{SETUP_CMDS}}
+      # is what installs the browser — if it does not, this job fails, correctly.
+      DS_REQUIRE_BROWSER: '1'
     steps:
       - uses: actions/checkout@v4
       - name: Setup
+        # Node: `actions/setup-node` with `cache: npm` BEFORE `npm ci`. The cache is the
+        # difference between one paid minute and several, on every run, forever. Pin the
+        # version from a `.node-version` file rather than a literal, so CI and the laptop
+        # cannot drift. Add `npx playwright install --with-deps chromium` when the verify
+        # command runs render gates.
         run: |
           {{SETUP_CMDS}}
       - name: Verify
