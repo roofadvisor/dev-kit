@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.2.3 — C-01 stops blocking `.environment`, a pipe to `head`, and sed on `.key`
+
+Found by replaying every C-01 deny in GHL-MCP between 2026-09-12 and 2026-09-15 and
+printing only counts, never a command: 13 of the 14 fell into two shapes, and the hook
+suite was green the whole time.
+
+- **A dotenv name has to end where a file name ends.** The dotenv arm checked the character
+  before `.env` and never the one after, so any word starting with "env" counted. GitHub's
+  deployments API names a field `environment`, and `gh api …/deployments --jq
+  '… \(.environment) …'` denied, as would every jq `.envelope`. Two denies of that shape in
+  three days. After the name there must now be the end of the command, a separator, a
+  suffix dot (`.env.local`), or `rc`. `.env`, `.env.local`, `.envrc` and `./config/.env`
+  still deny.
+- **A reading verb has to read the segment that names `.key`.** The key arm counted `head`,
+  `tail` or `cat` in *any* segment, so `node -e "…r.key…" | head -5` denied: `head` was
+  reading a pipe. That was 11 of the 14. `cat server.key | head` still denies, because
+  `cat` and the name share a segment.
+- **A sed substitution is not a path.** `s/row\.key/row.id/` is one word holding a slash and
+  a `.key`, which is exactly what the path signal looked for. Words that start with `s/` or
+  escape the dot are skipped; no file name does either.
+- **`.pem` gets the boundary `.env` was missing**, so `config.pemPath` stops denying and
+  `cat cert.pem` doesn't.
+
+The suite now re-runs each of these cases with `| head` and `| tail -3` appended and requires
+the same verdict. None of 2.2.0's key allow cases had a reading verb in a second segment,
+which is how that fix passed its own tests and failed on the first real pipeline.
+
+**Known and left alone:** `f=server.key; cat "$f"` now passes, because the verb and the name
+sit in different segments. It denied before only through the same over-broad rule behind the
+11, and it joins the gaps the arm already states: `python3 -c "open('site.key').read()"`, and
+`cat .e?v` in the arm beside it. These arms warn on plain spellings; they are not a guarantee.
+`mnemonic` still denies as a plain word.
+
 ## 2.2.2 — Rule 0 stops blocking the first file in a new folder
 
 Found in GHL-MCP by a session archiving dead code, which could not write a per-batch

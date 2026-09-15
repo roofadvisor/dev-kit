@@ -184,6 +184,69 @@ check "allows the npm lifecycle var"       0 guard.sh '{"tool_input":{"command":
 check "allows the sk-SK locale"            0 guard.sh '{"tool_input":{"command":"npx vite build --locale sk-SK"}}'
 check "blocks a real openai key shape"     2 guard.sh '{"tool_input":{"command":"openai --key sk-abcdefghijkl1234567890"}}'
 
+# 2.2.3 — measured, not guessed. Replaying every C-01 deny in GHL-MCP between
+# 2026-09-12 and 2026-09-15 put 13 of 14 into two shapes, and every case in this
+# file passed while those 13 denied. Both shapes are below, each beside the true
+# positive it must keep.
+#
+# a. The dotenv anchor looked BEFORE `.env` and never after, so any word that
+#    merely starts with "env" counted. GitHub's deployments API names a field
+#    `environment`: `gh api …/deployments --jq '… \(.environment) …'` denied.
+#    A dotenv name ENDS there — at a separator, a suffix dot, or as `.envrc`.
+check "allows a jq .environment field"     0 guard.sh '{"tool_input":{"command":"gh api repos/o/r/deployments --jq \"\\(.environment)\""}}'
+check "allows a jq .envelope filter"       0 guard.sh '{"tool_input":{"command":"jq \".envelope.id\" payload.json"}}'
+check "still blocks .env.local"            2 guard.sh '{"tool_input":{"command":"cat .env.local"}}'
+check "still blocks .envrc"                2 guard.sh '{"tool_input":{"command":"cat .envrc"}}'
+check "still blocks .env before a hyphen"  2 guard.sh '{"tool_input":{"command":"cat config/.env-backup"}}'
+# b. The key arm's reading verb counted in ANY segment, so `head` reading a pipe
+#    denied `… r.key … | head -5`. The 2.2.0 cases further down all pass; none of
+#    them has a reading verb in a second segment, and 11 of the 13 real denies did.
+check "allows .key property piped to head" 0 guard.sh '{"tool_input":{"command":"node -e \"console.log(rows.map(r => r.key))\" | head -5"}}'
+check "allows a jq .key filter piped"      0 guard.sh '{"tool_input":{"command":"jq \".items[] | .key\" data.json | head"}}'
+check "still blocks a key file piped"      2 guard.sh '{"tool_input":{"command":"cat server.key | head"}}'
+# c. sed delimits with slashes, so a substitution read as a path to a key file.
+check "allows a sed substitution on .key"  0 guard.sh '{"tool_input":{"command":"sed -i \"s/row\\.key/row.id/g\" src/table.ts"}}'
+check "allows an unescaped sed on .key"    0 guard.sh '{"tool_input":{"command":"sed -i \"s/r.key/r.id/\" src/table.ts"}}'
+check "still blocks a key path read"       2 guard.sh '{"tool_input":{"command":"head -3 certs/site.key"}}'
+# d. `.pem` had the same missing boundary as `.env`, so `config.pemPath` denied.
+check "allows a .pemPath property"         0 guard.sh '{"tool_input":{"command":"grep -rn config.pemPath src"}}'
+check "still blocks cat of a .pem"         2 guard.sh '{"tool_input":{"command":"cat cert.pem"}}'
+
+# Equivalence. An operation gets one verdict however the command ends: each case is
+# re-run with `| head` and with `| tail -3` appended. A rule that holds for one
+# spelling and fails the next is exactly what shipped green in 2.2.0.
+eq_json() { python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$1"; }
+eq_allow=(
+  'python3 -c "print(list(d.keys()))"'
+  'echo $cfg.keyboard.layout'
+  'node -e "return { ...d, ...d.key }"'
+  'jq ".rows[].key" data.json'
+  'python3 -c "print(d.key, 1)"'
+  'grep -n keystore tests/hooks_test.sh'
+  'sed -i "s/row\.key/row.id/g" src/table.ts'
+  'grep -rn config.pemPath src'
+  'jq ".envelope.id" payload.json'
+)
+eq_block=(
+  'cat server.key'
+  'cat tls.key && echo done'
+  'less certs/site.key'
+  'cat keystore/release'
+  'cp app.keystore /tmp/x'
+  'cat cert.pem'
+  'cat .env.local'
+)
+for c in "${eq_allow[@]}"; do
+  for p in ' | head' ' | tail -3'; do
+    check "stays allowed with${p}: $c" 0 guard.sh "$(eq_json "$c$p")"
+  done
+done
+for c in "${eq_block[@]}"; do
+  for p in ' | head' ' | tail -3'; do
+    check "stays blocked with${p}: $c" 2 guard.sh "$(eq_json "$c$p")"
+  done
+done
+
 # Found by running /project-audit against a real repo — the guard blocked the
 # audit twice on read-only work.
 #

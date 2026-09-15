@@ -93,9 +93,19 @@ fi
 # dotenv file, only that both appear. `cat README.md && test -f .env` therefore
 # denies. That fails safe, it is rare, and the alternative is a shell parser in
 # a hook that has to stay fast and dependency-free.
+#
+# And the name has to END where a file name ends. The anchor above only looked
+# BEFORE `.env`, so any word that merely starts with "env" matched: GitHub's
+# deployments API names a field `environment`, and `gh api …/deployments --jq
+# '… \(.environment) …'` denied, as would every jq `.envelope`. Two denies of
+# that shape in GHL-MCP between 2026-09-12 and 2026-09-15. After the name: the
+# end of the command, a separator, a dot that starts a suffix (`.env.local`),
+# or `rc`.
 envref=""
 case "$scrubbed" in
-  ".env"*|*[!A-Za-z0-9_.]".env"*) envref=1 ;;
+  ".env"|".env"[!A-Za-z0-9_]*|".envrc"|".envrc"[!A-Za-z0-9_]*) envref=1 ;;
+  *[!A-Za-z0-9_.]".env"|*[!A-Za-z0-9_.]".env"[!A-Za-z0-9_]*) envref=1 ;;
+  *[!A-Za-z0-9_.]".envrc"|*[!A-Za-z0-9_.]".envrc"[!A-Za-z0-9_]*) envref=1 ;;
 esac
 if [ -n "$envref" ]; then
   # ALLOWLIST, not a denylist. A previous revision listed the verbs that print a
@@ -231,8 +241,11 @@ shopt -s nocasematch
 # are not such verbs — the dotenv arm above already calls them safe, for the
 # case that guards actual values.
 #
-# Known gap, stated rather than hidden: an interpreter that opens the file
-# itself — `python3 -c "open('site.key').read()"` — carries neither signal.
+# Known gaps, stated rather than hidden: an interpreter that opens the file
+# itself — `python3 -c "open('site.key').read()"` — carries neither signal, and
+# since 2.2.3 neither does a variable that carries the name into another
+# segment: `f=server.key; cat "$f"`. The reading verb must share a segment with
+# the name (below), because the looser rule denied every `… x.key … | head`.
 # The names that only ever mean key material (`id_rsa`, `.pem`,
 # `credentials.json`) still deny on any mention below, and a bare file_path is
 # always strict, which is the route a Read or an Edit would take.
@@ -246,8 +259,18 @@ if [ "$keyref" = 2 ]; then
   keyref=""
   # A path: the slash and the extension in one token, no whitespace between.
   # `scripts/x.py -c 'print(d.key)'` has a slash and a `.key`, but not in the
-  # same word, and that is the whole difference.
-  [[ "$scrubbed" =~ /[^[:space:]]*\.key([^A-Za-z0-9_]|$) ]] && keyref=1
+  # same word, and that is the whole difference. Judged word by word, because a
+  # sed substitution is one word holding both — `s/row\.key/row.id/` — and no
+  # file name starts with `s/` or escapes its dot.
+  set -f
+  for word in $scrubbed; do
+    [[ "$word" =~ /[^[:space:]]*\.key([^A-Za-z0-9_]|$) ]] || continue
+    bare=${word#\"}; bare=${bare#\'}
+    case "$bare" in s/*) continue ;; esac
+    case "$word" in *'\.key'*) continue ;; esac
+    keyref=1; break
+  done
+  set +f
   # Or a verb that reads the file out, or puts its bytes somewhere they persist.
   # Judged in VERB POSITION and case-sensitively, both learned the hard way on
   # this fix's own commit: `git push origin HEAD` matched `head` when the list
@@ -276,7 +299,14 @@ if [ "$keyref" = 2 ]; then
       verb=${seg%%[[:space:]]*}; verb=${verb##*/}
       case "$verb" in
         cat|tac|bat|less|more|head|tail|nl|strings|xxd|od|base64|cp|mv|scp|rsync|install|tar|zip|curl|openssl|ssh-keygen|ssh-add|gpg|keytool|certutil)
-            keyref=1; break ;;
+            # Only when it reads THIS segment's `.key`. Anywhere in the command
+            # was the rule before 2.2.3, so `head` reading a pipe denied
+            # `… r.key … | head -5`: 11 of 14 C-01 denies in GHL-MCP between
+            # 2026-09-12 and 2026-09-15.
+            shopt -s nocasematch
+            case "$seg" in *".key"|*".key"[!A-Za-z0-9_]*) keyref=1 ;; esac
+            shopt -u nocasematch
+            [ -n "$keyref" ] && break ;;
       esac
     done <<< "$seps"
     shopt -s nocasematch
@@ -289,8 +319,9 @@ fi
 
 case "$scrubbed" in
   # Key material, unlike a dotenv file, has no safe read: any mention denies.
-  # It is also rare in ordinary work, so the strictness costs nothing.
-  *"id_rsa"*|*".pem"*|*"credentials.json"*)
+  # It is also rare in ordinary work, so the strictness costs nothing. `.pem`
+  # has to end where an extension ends, though, or `config.pemPath` denies.
+  *"id_rsa"*|*".pem"|*".pem"[!A-Za-z0-9_]*|*"credentials.json"*)
       deny "C-01" "key material is off-limits. Reference it by path in config; never read it into a transcript." "key-name" ;;
   # Unambiguous crypto terms: no ordinary-code reading, so no second signal.
   *"mnemonic"*|*"seed phrase"*)
