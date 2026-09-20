@@ -50,14 +50,49 @@ jobs:
     # Skip drafts and forks — a fork sees an empty secret and burns a run.
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    env:
+      # The `secrets` context cannot be read from a job-level `if:`, so the presence check
+      # lands here and gates the steps instead. Without it the job does not skip when the
+      # credential is simply absent — it runs and fails on every PR, and a check that
+      # always fails is a check people stop reading. preflight.yml is where a missing
+      # secret is reported loudly, once.
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
+      - name: Skip when the credential is not configured
+        if: env.HAS_CLAUDE_TOKEN != 'true'
+        run: |
+          echo "::notice title=Skipped::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so there is nothing to run. preflight.yml reports the missing secret as an error; until it is added this job passes without doing anything."
       - uses: actions/checkout@v4
+        if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
           fetch-depth: 0
-      - uses: anthropics/claude-code-action@v1
+      # The App runs only when the PR's copy of this workflow is identical to the default
+      # branch's; otherwise it skips and the action exits in about two seconds having done
+      # nothing ("Workflow validation failed"). That is expected on a PR that edits this
+      # file, and on any branch cut before it last changed. Ask the same question here, so
+      # the judgement below can tell that skip apart from a review that should have happened.
+      - name: Does this PR change the review workflow?
+        id: workflow_validation
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+          git fetch --no-tags --quiet origin "${BASE_REF}" || true
+          if git diff --quiet "origin/${BASE_REF}" -- .github/workflows/claude-code-review.yml; then
+            echo "differs=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "differs=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             Review only the changed files in this PR, against CLAUDE.md and .claude/rules/.
             Check the Definition of Done in docs/DEFINITION.md.
 
@@ -75,3 +110,77 @@ jobs:
             Be specific: file and line. Do not restate what the PR does.
             Do not comment on style — the formatter owns that.
             If it is clean, reply with one line saying so.
+
+            Post everything on the PR; nothing else is read. Use `gh pr comment`
+            for the summary, including the one-line clean verdict, and
+            `mcp__github_inline_comment__create_inline_comment` with
+            `confirmed: true` for a finding tied to a line.
+          # A run with a prompt is agent mode, which installs no comment tools unless they
+          # are named here, and a headless run denies any tool it was not given — so
+          # without this line the review has nowhere to post and the PR sees nothing
+          # (claude-code-action v1: src/mcp/install-mcp-server.ts).
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+      # The action sanitizes a failed run down to subtype/is_error/duration/cost and hides
+      # the result text (base-action/src/run-claude-sdk.ts), so an auth failure reads as a
+      # bare "is_error:true" — one repo spent a month unable to tell a rejected token from
+      # anything else. The unsanitized messages are still on disk in `execution_file`.
+      # When no model turn was billed the result text is the API's own error rather than
+      # Claude's output, so printing it exposes nothing from the repo; a billed failure
+      # prints only the counters, and show_full_output is how you read that one.
+      - name: Say why Claude failed
+        if: failure() && steps.claude.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          jq -r '
+            map(select(.type == "result")) | last // {} |
+            "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns) cost_usd=\(.total_cost_usd)",
+            (if (.total_cost_usd // 0) == 0
+             then "::error title=Claude did not run::\(.result // "no result text")"
+             else "::error title=Claude failed after a billed turn::result text withheld; rerun with show_full_output: true to read it"
+             end)
+          ' "$EXECUTION_FILE"
+      # The action reports a session that never began as SUCCESS: measured 2026-09-19, a
+      # review check went green in 1.8 seconds having posted nothing. "Say why Claude
+      # failed" cannot see that, because nothing failed. A review that took no turn is not
+      # a review, and a check that passes without doing its work is silent degradation.
+      # tests/workflow_diagnostics_test.sh runs this shell against each session shape.
+      - name: A green review means a review happened
+        if: always() && steps.claude.conclusion != 'skipped'
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          WORKFLOW_DIFFERS: ${{ steps.workflow_validation.outputs.differs }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+          if [ "${WORKFLOW_DIFFERS:-false}" = "true" ]; then
+            echo "::notice title=Review skipped by workflow validation::This PR's copy of .github/workflows/claude-code-review.yml differs from ${BASE_REF:-the default branch}, so the App refuses to run it. The review returns once this PR merges, or once ${BASE_REF:-the default branch} is merged into the branch."
+            exit 0
+          fi
+          if [ -z "${EXECUTION_FILE:-}" ] || [ ! -f "${EXECUTION_FILE}" ]; then
+            echo "::error title=No execution record::The action published no execution file, so nothing shows whether a review happened."
+            exit 1
+          fi
+          # A JSON array on most paths and JSONL on others: slurping, then flattening an
+          # array value, reads both and keeps the LAST result when a stream carries several.
+          RESULT=$(jq -s -c '[.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // empty' "${EXECUTION_FILE}" 2>/dev/null)
+          if [ -z "${RESULT}" ]; then
+            echo "::error title=No result event::The execution file carries no result event, so nothing shows whether a review happened."
+            exit 1
+          fi
+          TURNS=$(echo "$RESULT" | jq -r '.num_turns // 0')
+          IS_ERROR=$(echo "$RESULT" | jq -r '.is_error // false')
+          echo "turns=${TURNS} is_error=${IS_ERROR}"
+          # Cost is deliberately not a signal: a billed run can still have failed, and a
+          # rejected token bills nothing. Only turns separate a review from a session that
+          # never began.
+          if [ "${IS_ERROR}" = "true" ]; then
+            echo "::error title=The review errored::The session ended in an error, so this PR was not reviewed. The step above prints the reason."
+            exit 1
+          fi
+          if [ "${TURNS}" -le 1 ] 2>/dev/null; then
+            echo "::error title=The review never happened::The session ended after ${TURNS} turn(s) without reviewing anything, so a green check here would mean nothing."
+            exit 1
+          fi
+          echo "The review ran: ${TURNS} turns."

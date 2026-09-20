@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.2.4 — the Claude workflow templates stop shipping three silent no-ops
+
+Two repos wired these templates and spent a month on what they hid. Both fixed it locally;
+this moves the mechanism into the kit, so the next scaffold starts with the fixes instead
+of inheriting the month.
+
+- **`@claude` never read the comment.** `claude.yml` set `prompt:`, and on a comment or
+  issue event that switches the action to agent mode, which hands Claude the fixed text,
+  never the comment that summoned it, and posts no reply (claude-code-action v1,
+  `src/modes/detector.ts`; its public docs do not mention this). The template is tag mode
+  now, with standing instructions in `--append-system-prompt`.
+- **The review had nowhere to post.** A prompt means agent mode, which installs no comment
+  tools unless they are named, and a headless run denies any tool it was not given
+  (`src/mcp/install-mcp-server.ts`). The review ran and the PR saw nothing.
+- **A green review could mean no review.** The action reports a session that never began as
+  success: on 2026-09-19 a review check went green in 1.8 seconds having posted nothing. A
+  new step judges every run that ran and fails when no turn was taken — turns, not cost,
+  because a billed run can still have failed and a rejected token bills nothing. The App's
+  own workflow-validation skip is the one shape that is not a defect, so the step asks that
+  question too.
+- **A missing credential failed every run.** `secrets` cannot be read from a job-level
+  `if:`, so all three templates that call the action now carry the presence check as job
+  env and skip with a notice. `preflight.yml` stays where a missing secret is reported
+  loudly, once.
+- **The verify instruction had nothing to run.** `claude.yml` is now `claude.yml.tmpl`,
+  carrying the same `{{SETUP_CMDS}}` and `{{VERIFY}}` that `verify.yml.tmpl` fills.
+
+`tests/workflow_diagnostics_test.sh` extracts the judgement's own shell from the template
+and runs it against each session shape — ran, zero-turn, errored, billed-but-empty, JSONL,
+no record, no result event, validation skip, unanswered validation — then pins the wiring
+those shapes depend on.
+
+**Known and left alone:** `gates.yml`'s schema job gets the credential gate, but its verdict
+still travels through `$GITHUB_STEP_SUMMARY`, and no repo runs that job yet, so whether the
+action writes there has never been observed; it fails closed either way. The `@claude`
+workflow has no green-means-it-happened judgement — only the review does, because the review
+is the shape that was measured.
+
 ## 2.2.3 — C-01 stops blocking `.environment`, a pipe to `head`, and sed on `.key`
 
 Found by replaying every C-01 deny in GHL-MCP between 2026-09-12 and 2026-09-15 and

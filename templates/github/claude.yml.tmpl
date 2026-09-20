@@ -1,0 +1,81 @@
+name: claude
+# @claude in an issue or comment → Claude works the item and opens a PR.
+#
+# TAG MODE, deliberately. Supplying `prompt:` on a comment or issue event switches the
+# action to AGENT mode, which hands Claude that fixed text and never the comment that
+# summoned it, and posts no tracking comment (claude-code-action v1,
+# src/modes/detector.ts: "If prompt is provided on comment events, use agent mode").
+# A repo wired that way looks connected and answers nobody. Standing instructions go in
+# --append-system-prompt below, never in `prompt:`.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude:
+    if: contains(github.event.comment.body || github.event.issue.body, '@claude')
+    runs-on: ubuntu-latest
+    env:
+      # The `secrets` context cannot be read from a job-level `if:`, so the presence check
+      # lands here and gates the steps instead. Without it the job does not skip when the
+      # credential is simply absent — it runs and fails on every mention, and a check that
+      # always fails is a check people stop reading. preflight.yml is where a missing
+      # secret is reported loudly, once.
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    steps:
+      - name: Skip when the credential is not configured
+        if: env.HAS_CLAUDE_TOKEN != 'true'
+        run: |
+          echo "::notice title=Skipped::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so there is nothing to run. preflight.yml reports the missing secret as an error; until it is added this job passes without doing anything."
+      - uses: actions/checkout@v4
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        with:
+          fetch-depth: 0
+      # The system prompt tells Claude to run the verify command before opening a PR.
+      # Without the toolchain that command needs, the instruction has nothing to run —
+      # so this is the same {{SETUP_CMDS}} verify.yml.tmpl fills, for the same reason.
+      - name: Setup
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        run: |
+          {{SETUP_CMDS}}
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A headless run denies any tool it was not given, so the verify command has to
+          # be named here or Claude cannot run what the system prompt just told it to run.
+          claude_args: |
+            --allowedTools "Bash({{VERIFY}})"
+            --append-system-prompt "Follow CLAUDE.md and everything in .claude/rules/. Run {{VERIFY}} before opening a PR. Meet the Definition of Done in docs/DEFINITION.md. Include the rollback step in the PR description. If the issue needs a spec (medium or large), say so and stop instead of guessing at scope."
+      # The action sanitizes a failed run down to subtype/is_error/duration/cost and hides
+      # the result text (base-action/src/run-claude-sdk.ts), so an auth failure reads as a
+      # bare "is_error:true" — one repo spent a month unable to tell a rejected token from
+      # anything else. The unsanitized messages are still on disk in `execution_file`.
+      # When no model turn was billed the result text is the API's own error rather than
+      # Claude's output, so printing it exposes nothing from the repo; a billed failure
+      # prints only the counters, and show_full_output is how you read that one.
+      - name: Say why Claude failed
+        if: failure() && steps.claude.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          jq -r '
+            map(select(.type == "result")) | last // {} |
+            "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns) cost_usd=\(.total_cost_usd)",
+            (if (.total_cost_usd // 0) == 0
+             then "::error title=Claude did not run::\(.result // "no result text")"
+             else "::error title=Claude failed after a billed turn::result text withheld; rerun with show_full_output: true to read it"
+             end)
+          ' "$EXECUTION_FILE"

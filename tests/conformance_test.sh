@@ -69,8 +69,13 @@ fi
 
 echo
 echo "workflows parse"
-for f in "$KIT"/templates/github/*.yml; do
-  if python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$f" 2>/dev/null; then
+# Both shapes: a .tmpl renders to YAML once its {{TOKENS}} are filled, and globbing only
+# *.yml would drop it out of this check the moment a workflow template gains a token.
+for f in "$KIT"/templates/github/*.yml "$KIT"/templates/github/*.yml.tmpl; do
+  [ -e "$f" ] || continue
+  if python3 -c "
+import re, sys, yaml
+yaml.safe_load(re.sub(r'\{\{[A-Z_]+\}\}', 'dummy', open(sys.argv[1]).read()))" "$f" 2>/dev/null; then
     ok "$(basename "$f") parses"
   else bad "$(basename "$f") does not parse as YAML"; fi
 done
@@ -253,7 +258,7 @@ templates/tests/guard_tests.py
 templates/tests/guard_tests.ts
 templates/tests/statelessness_test.py
 templates/github/gates.yml
-templates/github/claude.yml
+templates/github/claude.yml.tmpl
 templates/github/claude-code-review.yml
 templates/github/notion-sync.yml
 templates/github/preflight.yml
@@ -330,7 +335,7 @@ skill = open(os.path.join(kit, "skills/project-init/SKILL.md")).read()
 # a .tmpl that must also render to valid YAML)
 WORKFLOWS = [
     ("verify.yml",             "templates/scaffold/verify.yml.tmpl",      True),
-    ("claude.yml",             "templates/github/claude.yml",             False),
+    ("claude.yml",             "templates/github/claude.yml.tmpl",        True),
     ("claude-code-review.yml", "templates/github/claude-code-review.yml", False),
     ("notion-sync.yml",        "templates/github/notion-sync.yml",        False),
     ("gates.yml",              "templates/github/gates.yml",              False),

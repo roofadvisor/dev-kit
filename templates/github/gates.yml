@@ -86,7 +86,17 @@ jobs:
     runs-on: ubuntu-latest
     # Only when a migration is actually in the diff.
     if: contains(github.event.pull_request.labels.*.name, 'migration') || true
+    env:
+      # `secrets` cannot be read from a job-level `if:`, so the presence check lands here.
+      # Without it a repo with no token fails this gate on every migration PR, with the
+      # action's opaque "is_error:true" as the only explanation. preflight.yml is where a
+      # missing secret is reported loudly, once.
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
+      - name: Skip when the credential is not configured
+        if: env.HAS_CLAUDE_TOKEN != 'true'
+        run: |
+          echo "::notice title=Skipped::CLAUDE_CODE_OAUTH_TOKEN is not set, so the schema review cannot run. preflight.yml reports the missing secret as an error."
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - name: Detect migrations
@@ -98,8 +108,9 @@ jobs:
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: anthropics/claude-code-action@v1
-        if: steps.detect.outputs.found == 'true'
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        if: env.HAS_CLAUDE_TOKEN == 'true' && steps.detect.outputs.found == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
@@ -111,8 +122,10 @@ jobs:
             Output the findings table. Then, on the LAST line, print exactly
             GATE:FAIL if any finding is UNSAFE, otherwise GATE:PASS.
       - name: Enforce
-        if: steps.detect.outputs.found == 'true'
+        if: env.HAS_CLAUDE_TOKEN == 'true' && steps.detect.outputs.found == 'true'
         run: |
-          # The agent's verdict is only a gate if something acts on it.
+          # The agent's verdict is only a gate if something acts on it. Unmeasured: no repo
+          # runs this job yet, so whether the action writes GATE:PASS into the step summary
+          # has never been observed. It fails closed if it does not.
           grep -q 'GATE:PASS' "$GITHUB_STEP_SUMMARY" 2>/dev/null || {
             echo "schema gate did not report PASS — treating as failure"; exit 1; }
