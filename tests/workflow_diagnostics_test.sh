@@ -137,6 +137,28 @@ else
   bad "claude.yml.tmpl does not allow Bash({{VERIFY}}) — a headless run would deny the verify it asks for"
 fi
 
+echo "no filled template names a {{TOKEN}} inside a comment"
+# A token is replaced by its value wherever it appears, and a value can run to several lines —
+# {{SETUP_CMDS}} does whenever the verify command needs a browser or a second package. Filled
+# inside a comment, every line after the first lands outside it and breaks the YAML; only a
+# run-block line is indented for a multi-line value. Tokens belong in value positions.
+scanned=0; tokened=0; offenders=""
+for f in "$KIT"/templates/github/*.yml.tmpl "$KIT"/templates/scaffold/*.yml.tmpl; do
+  [ -e "$f" ] || continue
+  scanned=$((scanned+1))
+  grep -qE '\{\{[A-Z_]+\}\}' "$f" && tokened=$((tokened+1))
+  for ln in $(grep -nE '^[[:space:]]*#.*\{\{[A-Z_]+\}\}' "$f" | cut -d: -f1); do
+    offenders="$offenders $(basename "$f"):$ln"
+  done
+done
+if [ "$tokened" -eq 0 ]; then
+  bad "scanned $scanned filled templates and none carries a token — this check is looking in the wrong place"
+elif [ -n "$offenders" ]; then
+  bad "a token sits inside a comment at$offenders — a multi-line fill there breaks the YAML"
+else
+  ok "no token inside a comment across $scanned filled templates ($tokened carry tokens)"
+fi
+
 echo "a review with a prompt can still post"
 # Agent mode installs no comment tools unless they are named, and a headless run denies
 # any tool it was not given (claude-code-action v1: src/mcp/install-mcp-server.ts).

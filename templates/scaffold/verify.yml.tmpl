@@ -40,8 +40,8 @@ jobs:
       DATABASE_URL: postgresql://dev:dev@localhost:5432/{{DB_NAME}}
       # The kit's render gates SKIP when no browser is present, and a skipped gate reads
       # as a passed one. Fifteen kit scripts honour this flag; with it set, a runner that
-      # cannot render fails loudly instead of reporting green on nothing. {{SETUP_CMDS}}
-      # is what installs the browser — if it does not, this job fails, correctly.
+      # cannot render fails loudly instead of reporting green on nothing. The Setup step
+      # below is what installs the browser — if it does not, this job fails, correctly.
       DS_REQUIRE_BROWSER: '1'
     steps:
       - uses: actions/checkout@v4
