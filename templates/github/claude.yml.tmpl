@@ -44,7 +44,14 @@ jobs:
           fetch-depth: 0
       # The system prompt tells Claude to run the verify command before opening a PR.
       # Without the toolchain that command needs, the instruction has nothing to run —
-      # so this is the same {{SETUP_CMDS}} verify.yml.tmpl fills, for the same reason.
+      # so this runs the same install as verify.yml, for the same reason. Keep the two
+      # identical: verify.yml goes red when an install is missing, and this workflow
+      # never does — the failure lands inside Claude's session, where it reads as a
+      # verify that ran. Install every package the verify command reaches; a second
+      # package with its own lockfile, not a workspace of the root, needs its own. Found
+      # in GHL-MCP on 2026-09-20 by reading its CI, not from a failed run: apps/operator-ui
+      # carries its own package-lock.json, so a root `npm ci` alone would have left
+      # verify's last link with no modules.
       - name: Setup
         if: env.HAS_CLAUDE_TOKEN == 'true'
         run: |

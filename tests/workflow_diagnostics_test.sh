@@ -112,6 +112,31 @@ else
   bad "claude.yml.tmpl has no --append-system-prompt, so its standing instructions reach nothing"
 fi
 
+echo "the comment workflow installs what verify.yml installs"
+# claude.yml.tmpl asks Claude to run the verify command, and nothing goes red when its install
+# is incomplete: the failure lands inside Claude's session. Filling both workflows from the same
+# tokens is what makes verify.yml's green run the proof, so both sides are pinned — to a run-block
+# line rather than any mention, because a comment naming a token would satisfy a looser match.
+VERIFY_TMPL="$KIT/templates/scaffold/verify.yml.tmpl"
+for f in "$TAG" "$VERIFY_TMPL"; do
+  n=$(basename "$f")
+  if grep -qE '^[[:space:]]+\{\{SETUP_CMDS\}\}[[:space:]]*$' "$f"; then
+    ok "$n installs from {{SETUP_CMDS}}"
+  else
+    bad "$n no longer installs from {{SETUP_CMDS}} — the two workflows stop sharing a proven install"
+  fi
+done
+if grep -qE '^[[:space:]]+\{\{VERIFY\}\}[[:space:]]*$' "$VERIFY_TMPL"; then
+  ok "verify.yml.tmpl runs {{VERIFY}}"
+else
+  bad "verify.yml.tmpl no longer runs {{VERIFY}} — its green run proves nothing about the command claude.yml asks for"
+fi
+if grep -qF 'Bash({{VERIFY}})' "$TAG"; then
+  ok "claude.yml.tmpl lets Claude run {{VERIFY}}"
+else
+  bad "claude.yml.tmpl does not allow Bash({{VERIFY}}) — a headless run would deny the verify it asks for"
+fi
+
 echo "a review with a prompt can still post"
 # Agent mode installs no comment tools unless they are named, and a headless run denies
 # any tool it was not given (claude-code-action v1: src/mcp/install-mcp-server.ts).
