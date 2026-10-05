@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# PostToolUse:Bash — records when the verify command ran and whether it passed.
-# Feeds both done-check.sh and the /project-audit evidence report.
+# PostToolUse:Bash — records a verify run that passed. Feeds done-check.sh and the
+# /project-audit evidence report.
+#
+# "Passed" is read from the event: PostToolUse fires only for a successful tool call
+# (a non-zero exit arrives as PostToolUseFailure, CLI 2.1.252) and carries no exit
+# code, so a run counts only when the verify's status IS the command's
+# (hook_is_verify_run, _parse.sh). The old `*verify*` substring match recorded
+# `gh pr checks 1591 | grep verify-src` as a passing verify (#9 R3).
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_parse.sh"
+input=$(hook_read_input)
+hook_enter_session_dir "$input"
 hook_opted_in || exit 0
-input=$(cat)
 cmd=$(hook_field "$input" "command")
 [ -z "$cmd" ] && exit 0
 
-case "$cmd" in
-  *verify*|*"pytest"*|*"vitest"*|*"forge test"*|*"npm test"*|*"pnpm test"*) ;;
-  # /gate's real invocation (commands/gate.md) is `node .../accuracy_report.mjs`,
-  # already covered by *accuracy_report* alone. A separate *"/gate"* arm was
-  # tried here and dropped: it matches the substring anywhere, so reading the
-  # command's own doc (`cat commands/gate.md`) or touching a `gateway/` path
-  # falsely records a verify that never ran. No coverage is lost by dropping it.
-  *accuracy_report*) ;;
-  *) exit 0 ;;
-esac
+# Only the success event records. hooks.json wires PostToolUse; a payload naming any
+# other event (a failure, were this ever wired there) never does.
+event=$(hook_top_field "$input" hook_event_name)
+[ -n "$event" ] && [ "$event" != "PostToolUse" ] && exit 0
+# A background run reports success when it STARTS (its result is a task id), so it
+# has passed nothing yet.
+case "$(hook_field "$input" run_in_background)" in true|True) exit 0 ;; esac
+hook_is_verify_run "$cmd" || exit 0
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 mkdir -p "$root/.claude" 2>/dev/null

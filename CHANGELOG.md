@@ -1,5 +1,48 @@
 # Changelog
 
+## 2.2.5 — the Stop hook stops looping, and judges the tree you are working in
+
+`done-check` (Stop) and `verify-record` (PostToolUse:Bash) misfired in both directions
+([#9](https://github.com/roofadvisor/dev-kit/issues/9)).
+
+- **It blocked forever.** A stop that `done-check` blocks is retried with
+  `stop_hook_active: true`. The hook never read its input, so it blocked every retry: on
+  2026-09-29 in GHL-MCP it bounced a session's status updates for two hours while a
+  subagent resolved a merge. It now blocks once and lets the retry through, which is the
+  CLI's own advice ("return success while it's true").
+- **It blocked mid-merge.** With a merge, rebase, cherry-pick or revert in progress it now
+  stands down. Nobody can claim done on a half-merged tree, and verify cannot pass on
+  conflict markers.
+- **It judged the wrong tree.** A hook process starts where the session launched, which is
+  the main checkout when the session works in a worktree. A worktree session was blocked
+  by the main checkout's files, and its verify marker landed there too. Both hooks now
+  read the `cwd` every payload carries.
+- **Finder files counted as source.** `.DS_Store`, `Thumbs.db` and `desktop.ini` no longer
+  count as a change, including an untracked folder that holds nothing else.
+- **A mention of "verify" counted as a passing run.** `verify-record` touched the marker
+  for any command containing "verify", so `gh pr checks 1591 | grep verify-src` certified
+  done with no verify run. A run now counts only when the command starts a verify or test
+  entrypoint and that run's exit status is the command's own: not piped (unless
+  `set -o pipefail`), not followed by `;`, `||` or `&`, not inside a heredoc body, and not
+  `run_in_background`. `PostToolUse` itself is the success signal, since a non-zero exit
+  arrives as `PostToolUseFailure` and the payload carries no exit code.
+
+**Behaviour change:** `npm run verify | tail -20` and `bash scripts/verify.sh > log; echo $?`
+no longer count as verify runs, because their exit status is not the verify's. Run the
+verify on its own, or under `set -o pipefail`; the block message now says so.
+
+Also released here, from #8: `claude.yml.tmpl` and `/project-init` step 10 say that the
+setup must install every package the verify command reaches, since nothing goes red in the
+`@claude` workflow when one is missing; and no filled template names a `{{TOKEN}}` inside a
+comment, where a two-line value breaks the YAML. `workflow_diagnostics` pins both.
+
+`tests/hooks_test.sh` gains 19 cases, each seen failing against 2.2.4's hooks first, with
+controls on both sides (264 in all). The payload facts above are read from Claude Code
+2.1.252's own input schemas.
+
+**Update:** `claude plugin update dev-kit@roofadvisor`, then restart Claude Code. The
+installed plugin's copy of these hooks is what fires, not this repo's.
+
 ## 2.2.4 — the Claude workflow templates stop shipping three silent no-ops
 
 Two repos wired these templates and spent a month on what they hid. Both fixed it locally;

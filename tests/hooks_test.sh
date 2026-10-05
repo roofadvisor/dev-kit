@@ -2,6 +2,10 @@
 # Red-then-green harness for dev-kit hooks.
 # A guard that has never been seen to fail is not a guard.
 set -uo pipefail
+# A hook always sees EOF on stdin in production; Claude Code writes the payload and
+# closes it. Without this, a case that pipes nothing inherits whatever stdin ran the
+# suite, and a hook that reads its payload waits on it forever.
+exec </dev/null
 HOOKS="$(cd "$(dirname "$0")/../hooks" && pwd)"
 KIT="$(cd "$HOOKS/.." && pwd)"
 KIT_LOG_PATH="$KIT/.claude/.enforcement-log"
@@ -668,6 +672,61 @@ echo y >> "$tok/app.ts"
 if [ "$got" -eq 2 ]; then echo "  PASS  blocks done when a source file postdates verify despite 20+ token changes"; pass=$((pass+1))
 else echo "  FAIL  blocks done when a source file postdates verify despite 20+ token changes (got $got)"; fail=$((fail+1)); fi
 
+# #9 (A28) — the Stop hook looped, and judged the wrong tree. Every case without
+# "control" in its name failed against the pre-fix script; the controls pass on both.
+dcp() { # name want dir payload — done-check fed a Stop payload, run from dir
+  local got
+  printf '%s' "$4" | (cd "$3" && bash "$HOOKS/done-check.sh") >/dev/null 2>&1; got=$?
+  if [ "$got" -eq "$2" ]; then echo "  PASS  $1"; pass=$((pass+1))
+  else echo "  FAIL  $1 (want exit $2, got $got)"; fail=$((fail+1)); fi
+}
+mkrepo() { # dir — opted-in repo with one committed source file, then changed
+  ( cd "$1" && git init -q && git config user.email t@t && git config user.name t \
+      && echo x > a.ts && git add -A && git commit -qm init && echo y >> a.ts ); mkstate "$1"
+}
+stop_json() { # cwd [stop_hook_active]
+  printf '{"hook_event_name":"Stop","session_id":"t","transcript_path":"/dev/null","cwd":"%s","stop_hook_active":%s}' "$1" "${2:-false}"
+}
+
+# R1. On the stop that retries after a block, Claude Code sets stop_hook_active, and
+# its own cap message says to "return success while it's true" (CLI 2.1.252). A
+# second block only loops: on 2026-09-29 in GHL-MCP it bounced every status update
+# for two hours.
+r1=$(mktemp -d); mkrepo "$r1"
+dcp "R1 control: a first stop on unverified source blocks" 2 "$r1" "$(stop_json "$r1" false)"
+dcp "R1: the retry after a block lets the turn end" 0 "$r1" "$(stop_json "$r1" true)"
+
+# R2. Nobody can claim done mid-merge, and verify cannot pass on conflict markers.
+r2=$(mktemp -d); mkrepo "$r2"; r2gd=$(git -C "$r2" rev-parse --absolute-git-dir)
+for op in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+  case "$op" in rebase-*) mkdir "$r2gd/$op" ;; *) git -C "$r2" rev-parse HEAD > "$r2gd/$op" ;; esac
+  dcp "R2: stands down while $op is in progress" 0 "$r2" "$(stop_json "$r2")"
+  rm -rf "${r2gd:?}/$op"
+done
+dcp "R2 control: the same tree with nothing in progress still blocks" 2 "$r2" "$(stop_json "$r2")"
+
+# Finder writes .DS_Store into every folder it opens. Three of them in the main
+# checkout blocked a session on 2026-09-30; they are not source.
+jk=$(mktemp -d)
+( cd "$jk" && git init -q && git config user.email t@t && git config user.name t \
+    && mkdir kit && echo x > a.ts && echo x > kit/b.ts && git add -A && git commit -qm init \
+    && touch .DS_Store kit/.DS_Store && mkdir assets && touch assets/.DS_Store ); mkstate "$jk"
+dcp "OS junk alone is not a source change, even in a new folder" 0 "$jk" "$(stop_json "$jk")"
+echo y >> "$jk/a.ts"
+dcp "control: OS junk does not hide a real change beside it" 2 "$jk" "$(stop_json "$jk")"
+
+# The session's own tree. A hook process starts where the session launched — the
+# main checkout when Claude works in a worktree (CLAUDE_PROJECT_DIR stays there) —
+# so judging its own cwd judges the wrong tree: on 2026-09-30 main's stray files
+# blocked a worktree session. The payload's cwd is where Claude is working.
+wm=$(mktemp -d); mkrepo "$wm"
+( cd "$wm" && git checkout -q -- a.ts && git add .claude && git commit -qm opt-in && git worktree add -q "$wm-wt" -b wt )
+echo y >> "$wm/a.ts"
+dcp "judges the worktree in the payload, not the main checkout it runs from" 0 "$wm" "$(stop_json "$wm-wt")"
+echo y >> "$wm-wt/a.ts"
+dcp "control: the worktree's own unverified change still blocks" 2 "$wm" "$(stop_json "$wm-wt")"
+rm -rf "$r1" "$r2" "$jk" "$wm" "$wm-wt"
+
 echo "verify-record.sh"
 vr=$(mktemp -d); ( cd "$vr" && git init -q ); mkstate "$vr"
 echo '{"tool_input":{"command":"pnpm verify"}}' | (cd "$vr" && bash "$HOOKS/verify-record.sh" >/dev/null 2>&1)
@@ -686,7 +745,7 @@ else echo "  FAIL  ignores unrelated commands"; fail=$((fail+1)); fi
 # before this fix: 941 of 1036 lines (91%) were that garbage, which is what
 # /retro and /project-audit were reading.
 vr3=$(mktemp -d); ( cd "$vr3" && git init -q ); mkstate "$vr3"
-printf '{"tool_input":{"command":"npm test -- --reporter=x\\nfix: a commit subject\\n\\nA body paragraph that keeps going.\\nAnd another line."}}' \
+printf '{"tool_input":{"command":"npm test -- --reporter=x && git commit -F - <<MSG\\nfix: a commit subject\\n\\nA body paragraph that keeps going.\\nMSG"}}' \
   | (cd "$vr3" && bash "$HOOKS/verify-record.sh" >/dev/null 2>&1)
 vr3n=$(wc -l < "$vr3/.claude/.session-log" 2>/dev/null | tr -d ' ')
 if [ "$vr3n" = "1" ]; then echo "  PASS  a multi-line command writes exactly one telemetry line"; pass=$((pass+1))
@@ -711,6 +770,53 @@ gatedoc=$(mktemp -d); ( cd "$gatedoc" && git init -q ); mkstate "$gatedoc"
 echo '{"tool_input":{"command":"cat commands/gate.md"}}' | (cd "$gatedoc" && bash "$HOOKS/verify-record.sh" >/dev/null 2>&1)
 if [ ! -f "$gatedoc/.claude/.last-verify" ]; then echo "  PASS  reading commands/gate.md does not record a verify"; pass=$((pass+1))
 else echo "  FAIL  reading commands/gate.md does not record a verify"; fail=$((fail+1)); fi
+
+# #9 (A28) R3 — a record must mean a verify RAN and its status was the command's.
+# PostToolUse fires only on success (failures arrive as PostToolUseFailure, CLI
+# 2.1.252) and carries no exit code, so the command's own exit status is all there
+# is, and it is the verify's only when nothing after the verify can mask it. Every
+# case without "control" in its name recorded under the pre-fix script.
+vrp() { # name want(1 records, 0 does not) payload
+  local d got=0; d=$(mktemp -d); ( cd "$d" && git init -q ); mkstate "$d"
+  printf '%s' "$3" | (cd "$d" && bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
+  [ -f "$d/.claude/.last-verify" ] && got=1
+  if [ "$got" -eq "$2" ]; then echo "  PASS  $1"; pass=$((pass+1))
+  else echo "  FAIL  $1 (want recorded=$2, got $got)"; fail=$((fail+1)); fi
+  rm -rf "$d"
+}
+bash_json() { # command [event] [run_in_background]
+  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":sys.argv[2],"tool_name":"Bash","tool_input":{"command":sys.argv[1],"run_in_background":sys.argv[3]=="true"},"tool_response":{"stdout":"","stderr":"","interrupted":False,"isImage":False}}))' "$1" "${2:-PostToolUse}" "${3:-false}"
+}
+# Mentions, reads and lookups are not runs.
+vrp "R3: grepping a CI check named verify-src is not a run" 0 "$(bash_json 'gh pr checks 1591 | grep verify-src')"
+vrp "R3: reading the verify script is not a run" 0 "$(bash_json 'cat scripts/verify.sh')"
+vrp "R3: another script whose name starts with verify is not the verify" 0 "$(bash_json 'npm run verify:rebuild-runbook')"
+vrp "R3: a verify inside a heredoc body is data" 0 "$(bash_json $'git commit -F - <<MSG\nnpm run verify\nMSG')"
+# A run whose status the command does not carry.
+vrp "R3: piped into tail, the exit status is tail's" 0 "$(bash_json 'npm run verify 2>&1 | tail -20')"
+vrp "R3: followed by ;, the exit status is the next command's" 0 "$(bash_json 'npm run verify; echo done')"
+vrp "R3: after ||, it may never have run" 0 "$(bash_json 'test -f .skip || npm run verify')"
+vrp "R3: sent to the background, it has not finished" 0 "$(bash_json 'npm run verify &')"
+vrp "R3: run_in_background reports success when the run starts" 0 "$(bash_json 'npm run verify' PostToolUse true)"
+vrp "R3: a failure event never records" 0 "$(bash_json 'npm run verify' PostToolUseFailure)"
+# Controls: every form whose exit status is the verify's still records.
+for c in 'npm run verify' 'pnpm verify' 'yarn verify' 'bash scripts/verify.sh' './scripts/verify.sh' \
+         'cd app && npm run verify' 'FOO=1 npm run verify' 'npm run verify > /tmp/v.log 2>&1' \
+         'npm run verify && echo ok' 'set -o pipefail; npm run verify 2>&1 | tail -20' \
+         'pytest -q' 'python3 -m pytest' 'npx vitest run' 'forge test' 'npm test' 'make verify'; do
+  vrp "control: '$c' records" 1 "$(bash_json "$c")"
+done
+
+# The session's own tree, as for done-check: the marker belongs to the worktree the
+# verify ran in, not the main checkout the hook process started in.
+vw=$(mktemp -d)
+( cd "$vw" && git init -q && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init ); mkstate "$vw"
+( cd "$vw" && git add .claude && git commit -qm opt-in && git worktree add -q "$vw-wt" -b wt )
+python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PostToolUse","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"npm run verify"},"tool_response":{"stdout":""}}))' "$vw-wt" \
+  | (cd "$vw" && bash "$HOOKS/verify-record.sh" >/dev/null 2>&1)
+if [ -f "$vw-wt/.claude/.last-verify" ] && [ ! -f "$vw/.claude/.last-verify" ]; then echo "  PASS  the marker lands in the worktree that ran verify"; pass=$((pass+1))
+else echo "  FAIL  the marker lands in the worktree that ran verify (worktree=$([ -f "$vw-wt/.claude/.last-verify" ] && echo yes || echo no), main=$([ -f "$vw/.claude/.last-verify" ] && echo yes || echo no))"; fail=$((fail+1)); fi
+rm -rf "$vw" "$vw-wt"
 
 echo "format.sh"
 # Self-contained fixture rather than relying on the ambient cwd: format.sh now

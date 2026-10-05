@@ -1128,6 +1128,35 @@ do-no-harm principle as a standing requirement on every capability the interview
 can turn on. Effort M — one skill (`/adopt-out` or a `/project-audit` action)
 plus the consumer-scan reused from the doc-layout work.
 
+### A28 — the Stop hook looped, misread verify runs, and judged the wrong tree · ✅ built in 2.2.5
+
+Filed as [#9](https://github.com/roofadvisor/dev-kit/issues/9) from GHL-MCP on 2026-09-30:
+`done-check.sh` blocked every retry because it never read `stop_hook_active`, blocked
+mid-merge, and `verify-record.sh` recorded any command mentioning "verify" as a passing
+run. A session here the same day added two more: Finder's `.DS_Store` counted as source,
+and a worktree session was judged by the main checkout, because a hook process starts
+where the session launched while the payload's `cwd` says where Claude is working.
+
+Built: `done-check` reads its payload. It exits 0 when `stop_hook_active` is true, and
+when `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `rebase-merge` or `rebase-apply`
+exists in the worktree's own git dir, and it drops OS junk, including untracked folders
+holding only junk. `verify-record` records only a `PostToolUse` whose command starts a
+verify or test entrypoint with a status that no later `|`, `;`, `||`, `&` or background run
+can mask (`hook_is_verify_run` in `hooks/_parse.sh`). Both enter the payload's `cwd`.
+Nineteen cases in `tests/hooks_test.sh`, each red against 2.2.4 first.
+
+Two deviations from #9, both forced by what the payload actually holds (CLI 2.1.252):
+- #9 asked to read the run's exit status from the payload. There is none: `PostToolUse`
+  fires only on success (failures arrive as `PostToolUseFailure`), so the event is the
+  signal and the parser makes sure the command's status is the verify's.
+- #9 asked to anchor on "the project's declared verify command". No repo declares one
+  machine-readably (`.framework-state.json` has no such field), so the anchor is a fixed
+  list of verify and test entrypoints. A project whose verify is something else is not
+  recognised; `done-check` then blocks once per stop and lets the retry through.
+
+Not built: #9's optional item, blocking only when the turn claims completion
+(`last_assistant_message` is in the Stop payload).
+
 ## 3 — Registry debt (PROSE that should be mechanized)
 
 From `templates/rules/REGISTRY.md`. Each already carries a promote-when trigger.
