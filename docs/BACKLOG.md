@@ -1146,10 +1146,12 @@ skipped, comments end at their line, operator runs like `;(` refused, `set +o pi
 honoured). Both enter the payload's `cwd`, and opt-in also asks the main checkout, so a
 worktree of a repo with an untracked marker stays opted in.
 
-A review of the first draft (Codex had hit its quota, so a local reviewer stood in) found
-that `PostToolUse` is not "passed": the CLI reinterprets some non-zero exits as success and
-reports backgrounded and interrupted runs through it. Fixed before release, with 18 more
-cases seen failing first.
+Two review rounds (Codex had hit its quota, so a local reviewer stood in) changed the
+draft. The first found that `PostToolUse` is not "passed": the CLI reinterprets some
+non-zero exits as success and reports backgrounded and interrupted runs through it. The
+second found the new opt-in fallback opting in repos that never asked (a
+`--separate-git-dir` repo, a bare repo's worktree), and a comment ending in an operator
+joining the next line. Both fixed before release, with 28 more cases seen failing first.
 
 Two deviations from #9, both forced by what the payload holds (CLI 2.1.252):
 - #9 asked to read the exit status from the payload. There is none; the clean-finish
@@ -1163,7 +1165,8 @@ Two deviations from #9, both forced by what the payload holds (CLI 2.1.252):
 Not built: #9's optional item (block only when the turn claims completion). Git quotes
 porcelain paths with spaces, so a junk-only folder with a space in its name still counts
 (the safe direction), and a junk-only folder holding a symlink to source is dropped
-(fails open; rare).
+(fails open; rare). A command holding a quoted or escaped operator (`'|'`, `\;`) is not
+read at all, so it never counts: a safe miss, e.g. `find … -exec … \; && npm run verify`.
 
 ## 3 — Registry debt (PROSE that should be mechanized)
 

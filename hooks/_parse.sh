@@ -14,8 +14,9 @@
 # verify-record read the payload first only to learn which tree the session is
 # in (hook_enter_session_dir).
 hook_opted_in() {
-  local root
-  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+  local root out gitdir common
+  out=$(git rev-parse --show-toplevel --git-dir --git-common-dir 2>/dev/null) || return 1
+  root=${out%%$'\n'*}; out=${out#*$'\n'}; gitdir=${out%%$'\n'*}; common=${out#*$'\n'}
   # Presence is the whole signal — deliberately not parsed. This file's
   # CONTENT is irrelevant to opt-in status (upgrade.py's --apply and
   # /project-init step 7 are the only writers, and nothing downstream of this
@@ -29,10 +30,13 @@ hook_opted_in() {
   # A linked worktree carries only what is committed, so a repo whose marker is
   # untracked opted in from its main checkout: ask there too. Without this, a hook
   # that enters the session's worktree (hook_enter_session_dir) would go dark in it.
-  # A git too old for --path-format answers no, as before.
-  local common
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  [ -f "$(dirname "$common")/.claude/.framework-state.json" ]
+  # Only a real linked worktree has one: its git dir sits under the common dir's
+  # worktrees/, and that common dir is a checkout's own .git. A --separate-git-dir
+  # repo or a bare repo's worktree has no main checkout, and a marker in some
+  # folder above its git dir is not its opt-in. One git call either way.
+  case "$gitdir" in "$common"/worktrees/*) ;; *) return 1 ;; esac
+  [ "${common##*/}" = .git ] || return 1
+  [ -f "${common%/.git}/.claude/.framework-state.json" ]
 }
 
 hook_field() {
@@ -115,6 +119,8 @@ hook_is_verify_run() {
   python3 - "$1" <<'PY'
 import re, shlex, sys
 
+if re.search(r"\\[;&|]|(['\"])[;&|]+\1", sys.argv[1]):
+    sys.exit(1)
 # The shell drops a backslash-newline before it tokenizes.
 lines = sys.argv[1].replace("\\\n", "").split("\n")
 # Skip each heredoc body through its terminator, then keep reading: the lines after
@@ -138,11 +144,7 @@ while i < len(lines):
 # A newline separates commands unless the line ends in an operator that continues
 # it. The `;` goes AFTER the newline, so a # comment, which shlex runs to the end of
 # its line, cannot swallow the commands on the lines below.
-cmd = ""
-for j, line in enumerate(kept):
-    cmd += line
-    if j < len(kept) - 1:
-        cmd += "\n" if re.search(r"(&&|\|\||\|&?)\s*$", line) else "\n;"
+cmd = "\n;".join(kept)
 # shlex ends a word at `#`; bash keeps a `#` inside a word as a literal.
 cmd = re.sub(r"(?<=[^\s;&|()<>])#", "\x00", cmd)
 lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
@@ -151,6 +153,12 @@ try:
     toks = list(lex)
 except ValueError:
     sys.exit(1)
+_t = []
+for t in toks:
+    if t == ";" and _t and _t[-1] in ("&&", "||", "|", "|&"):
+        continue
+    _t.append(t)
+toks = _t
 
 OPS = {"&&", "||", ";", "|", "&", "|&", ";;", ";&", ";;&", "&|"}
 REDIR = {">&", "<&", "&>", "&>>", ">|"}
@@ -172,10 +180,14 @@ if "||" in ops:
 
 def pipefail_on(upto):
     on = False
-    for s in segs[:upto]:
+    for idx, s in enumerate(segs[:upto]):
         if s[:1] != ["set"]:
             continue
+        if ops[idx] in ("|", "|&") or (idx > 0 and ops[idx - 1] in ("|", "|&", "&&", "||")):
+            continue
         for k in range(2, len(s)):
+            if s[k - 1] == "--":
+                break
             if s[k] == "pipefail" and "o" in s[k - 1]:
                 on = s[k - 1].startswith("-") if s[k - 1][:1] in "-+" else on
     return on

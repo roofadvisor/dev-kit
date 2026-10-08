@@ -32,8 +32,9 @@
     two-minute timeout or the user moved to the background, and for an interrupt. None of
     those count.
 
-**Behaviour change:** `npm run verify | tail -20`, `…; echo $?`, and a verify that outruns
-the Bash timeout no longer count. Run the verify on its own and in the foreground (raise
+**Behaviour change:** `npm run verify | tail -20`, `…; echo $?`, a verify that outruns the
+Bash timeout, and a command holding a quoted or escaped operator
+(`find … -exec … \; && npm run verify`) no longer count. Run the verify on its own and in the foreground (raise
 the timeout if it is slow), or under `set -o pipefail`; the block message says so.
 
 Also released here, from #8: `claude.yml.tmpl` and `/project-init` step 10 say that the
@@ -41,10 +42,11 @@ setup must install every package the verify command reaches, since nothing goes 
 `@claude` workflow when one is missing; and no filled template names a `{{TOKEN}}` inside a
 comment, where a two-line value breaks the YAML. `workflow_diagnostics` pins both.
 
-`tests/hooks_test.sh` gains 69 cases (225 → 294). Each of the 37 that are not controls was
-seen failing first, against 2.2.4's hooks or against this release's first draft, which a
-review caught recording failed and backgrounded runs. The payload facts above are read from
-Claude Code 2.1.252's own input and output schemas.
+`tests/hooks_test.sh` gains 83 cases (225 → 308). 47 were seen failing first, against 2.2.4's
+hooks or against one of this release's drafts, which two review rounds caught recording
+failed, backgrounded and misread runs; the rest are controls, plus three pins on behaviour
+that already worked. The payload facts above are read from Claude Code 2.1.252's own input
+and output schemas.
 
 **Update:** `claude plugin update dev-kit@roofadvisor`, then restart Claude Code. The
 installed plugin's copy of these hooks is what fires, not this repo's.

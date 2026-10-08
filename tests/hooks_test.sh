@@ -783,6 +783,20 @@ echo y >> "$no-wt/a.ts"
 dcp "control: a worktree of a repo that never opted in stays silent" 0 "$no" "$(stop_json "$no-wt")"
 rm -rf "$um" "$um-wt" "$no" "$no-wt"
 
+# Re-review of #11 (A): the fallback asks a main checkout only for a real linked
+# worktree. A repo with a separate git dir, or a worktree of a bare repo, has no
+# main checkout to ask, and a marker in some folder above its git dir is not its opt-in.
+sp=$(mktemp -d); mkstate "$sp"
+git init -q --separate-git-dir "$sp/r.git" "$sp/r"
+( cd "$sp/r" && git config user.email t@t && git config user.name t && echo x > a.ts && git add -A && git commit -qm init && echo y >> a.ts )
+dcp "a repo whose git dir sits in an opted-in folder is not opted in by it" 0 "$sp/r" "$(stop_json "$sp/r")"
+bw=$(mktemp -d); mkstate "$bw"; src=$(mktemp -d)
+( cd "$src" && git init -q && git config user.email t@t && git config user.name t && echo x > a.ts && git add -A && git commit -qm init )
+git clone -q --bare "$src" "$bw/b.git" && git -C "$bw/b.git" worktree add -q "$bw/wt" 2>/dev/null
+echo y >> "$bw/wt/a.ts"
+dcp "a worktree of a bare repo in an opted-in folder is not opted in by it" 0 "$bw/wt" "$(stop_json "$bw/wt")"
+rm -rf "$sp" "$bw" "$src"
+
 echo "verify-record.sh"
 vr=$(mktemp -d); ( cd "$vr" && git init -q ); mkstate "$vr"
 echo '{"tool_input":{"command":"pnpm verify"}}' | (cd "$vr" && bash "$HOOKS/verify-record.sh" >/dev/null 2>&1)
@@ -908,6 +922,22 @@ vrp "control: |& pipes" 0 "$(bash_json 'npm run verify |& tail -5')"
 vrp "control: set -e is not pipefail" 0 "$(bash_json 'set -e; npm run verify | tail -5')"
 vrp "control: set -euo pipefail makes a piped verify count" 1 "$(bash_json 'set -euo pipefail; npm run verify | tail -5')"
 vrp "control: a heredoc that ends the command still records" 1 "$(bash_json $'npm run verify && git commit -qF - <<\'EOF\'\nmsg\nEOF')"
+
+# Re-review of #11 (B): a comment that ends in an operator must not join the next
+# line, and a comment line inside an && continuation must not break it.
+vrp "B: a comment ending in || does not join the next line" 0 "$(bash_json $'npm run verify  # lint ||\necho "exit code: $?"')"
+vrp "B: a comment line inside an && continuation is skipped" 1 "$(bash_json $'npm run verify &&\n# show it\necho ok')"
+vrp "control: a line ending in && continues the command" 1 "$(bash_json $'npm run verify &&\necho ok')"
+vrp "control: a line ending in | still pipes" 0 "$(bash_json $'npm run verify 2>&1 |\ntail -5')"
+# Re-review of #11: three contrived false records, closed because each is cheap.
+vrp "pipefail after set -- is a positional argument" 0 "$(bash_json 'set -- -o pipefail; npm run verify | tail -5')"
+vrp "pipefail set inside a pipeline runs in a subshell" 0 "$(bash_json 'set -o pipefail | cat; npm run verify | tail -5')"
+vrp "pipefail set after && may never have run" 0 "$(bash_json 'false && set -o pipefail; npm run verify | tail -5')"
+vrp "a quoted | is not a pipe" 0 "$(bash_json "echo '|' npm run verify")"
+vrp "a quoted && is not an operator" 0 "$(bash_json "printf '%s' '&&' npm run verify")"
+vrp "an escaped ; is not a separator" 0 "$(bash_json 'echo \; npm run verify')"
+vrp "control: backgroundTaskId alone means the run has not finished" 0 "$(resp_json 'npm run verify' '{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"b2"}')"
+vrp "control: backgroundedToDeliverMessage alone means the same" 0 "$(resp_json 'npm run verify' '{"stdout":"","stderr":"","interrupted":false,"backgroundedToDeliverMessage":true}')"
 
 echo "format.sh"
 # Self-contained fixture rather than relying on the ambient cwd: format.sh now
