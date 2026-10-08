@@ -8,8 +8,30 @@
 # That is the exact failure class this framework exists to catch.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_parse.sh"
+input=$(hook_read_input)
+hook_enter_session_dir "$input"
 hook_opted_in || exit 0
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# R1 (#9): this stop is the retry after a block. Claude Code sets stop_hook_active
+# then, and its own cap message says to "return success while it's true" (CLI
+# 2.1.252: "A hook blocked the turn from ending N consecutive times"). The first
+# block already delivered the message; a second one only loops. On 2026-09-29 in
+# GHL-MCP it bounced every status update for two hours.
+[ "$(hook_top_field "$input" stop_hook_active)" = "true" ] && exit 0
+
+# R2 (#9): a merge, rebase, cherry-pick or revert is in progress. Nobody can claim
+# done on a half-merged tree, and verify cannot pass on conflict markers, so a block
+# only demands a run that cannot succeed. The state lives in the worktree's own git
+# dir, which is why this asks git where that is.
+if gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null); then
+  for op in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [ -e "$gitdir/$op" ]; then
+      echo "done-check: $op is present, so a merge, rebase, cherry-pick or revert is in progress in $root; not judging a half-merged tree." >&2
+      exit 0
+    fi
+  done
+fi
 
 # Every added/modified/untracked path, excluding docs and config. Token
 # sources are re-admitted explicitly, ahead of the blanket extension
@@ -45,10 +67,36 @@ changed=$(
     git -C "$root" status --porcelain 2>/dev/null \
       | sed 's/^...//' \
       | grep -Ev '^(docs|\.github|\.claude)/' \
-      | grep -Ev '\.(md|txt|json|ya?ml|lock)$'
+      | grep -Ev '\.(md|txt|json|ya?ml|lock)$' \
+      | grep -Ev '(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini)$'
   }
 )
+# OS junk is not source: Finder writes .DS_Store into every folder it opens, and
+# three of them in a main checkout blocked a session on 2026-09-30. The filter above
+# drops the files; an untracked folder shows as one `dir/` line, so drop that too
+# when it holds nothing else. A folder find cannot read is kept, not excused.
+# A function, not a `case` inside $(...): bash 3.2, macOS's /bin/bash, closes the
+# substitution at a pattern's `)`.
+drop_junk_folders() {
+  local f other
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if [ "${f%/}" != "$f" ] \
+        && other=$(find "$root/$f" -type f ! -name .DS_Store ! -name Thumbs.db ! -name desktop.ini -print -quit 2>/dev/null) \
+        && [ -z "$other" ]; then
+      continue
+    fi
+    printf '%s\n' "$f"
+  done
+}
+changed=$(printf '%s\n' "$changed" | drop_junk_folders)
 [ -z "$changed" ] && exit 0
+
+# Said with every block below: a verify that ran but whose status the command did not
+# carry never refreshed the marker (verify-record.sh), so say why it did not count.
+counts="A verify counts only when it runs on its own and finishes: piped without set -o pipefail, followed by ; or &, after ||, backgrounded or interrupted, the command's exit status is not the verify's."
+command -v python3 >/dev/null 2>&1 \
+  || counts="$counts This host has no python3, which verify-record.sh needs to recognise a verify run, so no run can clear this."
 
 marker="$root/.claude/.last-verify"
 if [ ! -f "$marker" ]; then
@@ -57,6 +105,7 @@ if [ ! -f "$marker" ]; then
     printf '%s\n' "$changed" | head -5 | sed 's/^/  /'
     echo "Run the project verify command before reporting completion."
     echo "A 'done' claim not backed by a passing run is a guess about the diff."
+    echo "$counts"
   } >&2
   exit 2
 fi
@@ -94,6 +143,7 @@ done <<< "$changed"
 
 if [ "$newest" -gt "$mtime" ]; then
   echo "Source changed after the last verify run. Re-run verify before claiming done." >&2
+  echo "$counts" >&2
   exit 2
 fi
 exit 0

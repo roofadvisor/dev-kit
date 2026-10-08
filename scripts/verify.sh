@@ -8,14 +8,14 @@
 # tying them together.
 #
 # That gap was not cosmetic. hooks/verify-record.sh records a verify run only
-# when the command matches *verify*|*pytest*|*vitest*|*forge test*|*npm test*|
-# *pnpm test*, and `bash tests/hooks_test.sh` matches none of them. So the kit
-# could never record a verify run against itself, and hooks/done-check.sh —
-# which blocks Stop when source changed and no verify was recorded — would have
+# for a command that starts a verify or test entrypoint (hook_is_verify_run in
+# hooks/_parse.sh), and `bash tests/hooks_test.sh` is neither. So the kit could
+# never record a verify run against itself, and hooks/done-check.sh — which
+# blocks Stop when source changed and no verify was recorded — would have
 # blocked every single session here the moment the hooks were armed.
 #
-# Named `verify.sh` deliberately: it matches the *verify* pattern, so running it
-# is what makes done-check.sh satisfiable in this repo.
+# Named `verify.sh` deliberately: `bash scripts/verify.sh` is a verify entrypoint,
+# so running it, on its own and in the foreground, is what satisfies done-check.sh.
 #
 # Exit 0 only when everything passes. Any failure is loud and fatal.
 set -uo pipefail

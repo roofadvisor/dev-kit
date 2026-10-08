@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# PostToolUse:Bash — records when the verify command ran and whether it passed.
-# Feeds both done-check.sh and the /project-audit evidence report.
+# PostToolUse:Bash — records a verify run that passed. Feeds done-check.sh and the
+# /project-audit evidence report.
+#
+# The payload carries no exit code, so "passed" takes two checks (_parse.sh): the
+# CLI reported a clean finish, not a reinterpreted non-zero exit, a backgrounded
+# run or an interrupt (hook_bash_ran_clean); and the command's exit status IS the
+# verify's (hook_is_verify_run). The old `*verify*` substring match recorded
+# `gh pr checks 1591 | grep verify-src` as a passing verify (#9 R3).
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_parse.sh"
-hook_opted_in || exit 0
-input=$(cat)
+input=$(hook_read_input)
 cmd=$(hook_field "$input" "command")
 [ -z "$cmd" ] && exit 0
-
-case "$cmd" in
-  *verify*|*"pytest"*|*"vitest"*|*"forge test"*|*"npm test"*|*"pnpm test"*) ;;
-  # /gate's real invocation (commands/gate.md) is `node .../accuracy_report.mjs`,
-  # already covered by *accuracy_report* alone. A separate *"/gate"* arm was
-  # tried here and dropped: it matches the substring anywhere, so reading the
-  # command's own doc (`cat commands/gate.md`) or touching a `gateway/` path
-  # falsely records a verify that never ran. No coverage is lost by dropping it.
-  *accuracy_report*) ;;
-  *) exit 0 ;;
-esac
+# Every command hook_is_verify_run can accept contains one of these, so most Bash
+# calls, in every repo, stop here at the cost of one field read.
+case "$cmd" in *verify*|*test*|*accuracy_report*) ;; *) exit 0 ;; esac
+hook_enter_session_dir "$input"
+hook_opted_in || exit 0
+hook_bash_ran_clean "$input" || exit 0
+hook_is_verify_run "$cmd" || exit 0
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 mkdir -p "$root/.claude" 2>/dev/null

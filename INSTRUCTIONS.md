@@ -135,8 +135,8 @@ every repo this kit has actually touched. Harness-only: no model context cost.
 | PreToolUse (Bash\|Read\|Edit\|Write) | `guard.sh` | Hard-blocks dangerous commands (secrets, force-push, …) — exit 2, stderr returned to Claude |
 | PreToolUse (Write) | `rule-zero.sh` | Blocks a new near-duplicate file when a canonical home already exists for that category |
 | PostToolUse (Edit\|Write) | `format.sh` | Best-effort auto-format of changed files (ruff / prettier) — never blocks |
-| PostToolUse (Bash) | `verify-record.sh` | Records whether the verify command ran and whether it passed |
-| Stop | `done-check.sh` | Refuses a silent "done" when source changed but verify never ran this session |
+| PostToolUse (Bash) | `verify-record.sh` | Records a verify run that passed: the CLI reported a clean finish and the command's exit status is the verify's own, in the session's own worktree |
+| Stop | `done-check.sh` | Refuses a silent "done" when source changed after the last passing verify: once per stop (the retry passes), never mid-merge, judging the session's own worktree |
 
 ## The six design bundles
 
