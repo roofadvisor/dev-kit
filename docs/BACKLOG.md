@@ -1137,25 +1137,33 @@ run. A session here the same day added two more: Finder's `.DS_Store` counted as
 and a worktree session was judged by the main checkout, because a hook process starts
 where the session launched while the payload's `cwd` says where Claude is working.
 
-Built: `done-check` reads its payload. It exits 0 when `stop_hook_active` is true, and
-when `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `rebase-merge` or `rebase-apply`
-exists in the worktree's own git dir, and it drops OS junk, including untracked folders
-holding only junk. `verify-record` records only a `PostToolUse` whose command starts a
-verify or test entrypoint with a status that no later `|`, `;`, `||`, `&` or background run
-can mask (`hook_is_verify_run` in `hooks/_parse.sh`). Both enter the payload's `cwd`.
-Nineteen cases in `tests/hooks_test.sh`, each red against 2.2.4 first.
+Built: `done-check` reads its payload. It exits 0 when `stop_hook_active` is true and while
+a merge, rebase, cherry-pick or revert is in progress, and it drops OS junk. `verify-record`
+records only when the CLI reported a clean finish (`hook_bash_ran_clean`: no
+`returnCodeInterpretation`, no background fields, not interrupted, not `run_in_background`)
+and the command's exit status is the verify's (`hook_is_verify_run`: heredoc bodies
+skipped, comments end at their line, operator runs like `;(` refused, `set +o pipefail`
+honoured). Both enter the payload's `cwd`, and opt-in also asks the main checkout, so a
+worktree of a repo with an untracked marker stays opted in.
 
-Two deviations from #9, both forced by what the payload actually holds (CLI 2.1.252):
-- #9 asked to read the run's exit status from the payload. There is none: `PostToolUse`
-  fires only on success (failures arrive as `PostToolUseFailure`), so the event is the
-  signal and the parser makes sure the command's status is the verify's.
+A review of the first draft (Codex had hit its quota, so a local reviewer stood in) found
+that `PostToolUse` is not "passed": the CLI reinterprets some non-zero exits as success and
+reports backgrounded and interrupted runs through it. Fixed before release, with 18 more
+cases seen failing first.
+
+Two deviations from #9, both forced by what the payload holds (CLI 2.1.252):
+- #9 asked to read the exit status from the payload. There is none; the clean-finish
+  fields and the command's shape stand in for it.
 - #9 asked to anchor on "the project's declared verify command". No repo declares one
-  machine-readably (`.framework-state.json` has no such field), so the anchor is a fixed
-  list of verify and test entrypoints. A project whose verify is something else is not
-  recognised; `done-check` then blocks once per stop and lets the retry through.
+  machine-readably, so the anchor is a fixed list of verify and test entrypoints. An
+  unrecognised verify costs one block per stop, never a loop. The list also accepts a
+  partial run (`pytest tests/one.py::t`, `make verify -n`) as a verify of the whole tree,
+  as 2.2.4 did.
 
-Not built: #9's optional item, blocking only when the turn claims completion
-(`last_assistant_message` is in the Stop payload).
+Not built: #9's optional item (block only when the turn claims completion). Git quotes
+porcelain paths with spaces, so a junk-only folder with a space in its name still counts
+(the safe direction), and a junk-only folder holding a symlink to source is dropped
+(fails open; rare).
 
 ## 3 — Registry debt (PROSE that should be mechanized)
 

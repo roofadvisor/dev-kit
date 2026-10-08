@@ -25,7 +25,14 @@ hook_opted_in() {
   # and failing open on a parse error — would make a corrupted marker file a
   # way to silently go dark, which is the exact failure class A18 exists to
   # close, not reopen one level up.
-  [ -f "$root/.claude/.framework-state.json" ]
+  [ -f "$root/.claude/.framework-state.json" ] && return 0
+  # A linked worktree carries only what is committed, so a repo whose marker is
+  # untracked opted in from its main checkout: ask there too. Without this, a hook
+  # that enters the session's worktree (hook_enter_session_dir) would go dark in it.
+  # A git too old for --path-format answers no, as before.
+  local common
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ -f "$(dirname "$common")/.claude/.framework-state.json" ]
 }
 
 hook_field() {
@@ -92,15 +99,15 @@ hook_enter_session_dir() {
 }
 
 # True when the command RUNS the verify (or a test runner) and that run's exit
-# status is the command's own. PostToolUse fires only for a successful call (a
-# non-zero exit arrives as PostToolUseFailure) and carries no exit code, so the
-# command's status is all a hook sees, and it is the verify's only when nothing
-# can mask it (#9 R3):
+# status is the command's own. The payload carries no exit code, and the CLI
+# reports some non-zero exits as success (hook_bash_ran_clean refuses those), so
+# the command must also be shaped so that its status IS the verify's (#9 R3):
 #  - mentioning is not running: `gh pr checks 1591 | grep verify-src` and
 #    `cat scripts/verify.sh` both reset the marker under the old *verify* match;
-#  - `verify | tail`, `verify; echo` and `verify &` exit with someone else's
-#    status, and after `x || verify` the verify may never have run;
-#  - a heredoc body is data, not commands.
+#  - `verify | tail` without pipefail, `verify; echo` and `verify &` exit with
+#    someone else's status, and after `x || verify` the verify may never have run;
+#  - a heredoc body is data, but the lines after its terminator are commands;
+#  - a # comment runs to the end of its line, and no further.
 # A command it cannot parse is not a verify. A missed record costs one block, and
 # the retry passes (R1); a false one certifies a change nothing checked.
 hook_is_verify_run() {
@@ -108,7 +115,36 @@ hook_is_verify_run() {
   python3 - "$1" <<'PY'
 import re, shlex, sys
 
-cmd = sys.argv[1].split("<<", 1)[0].replace("\n", " ; ")
+# The shell drops a backslash-newline before it tokenizes.
+lines = sys.argv[1].replace("\\\n", "").split("\n")
+# Skip each heredoc body through its terminator, then keep reading: the lines after
+# it are commands again. A heredoc it cannot read, or one never closed, is refused.
+HD = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+kept, i = [], 0
+while i < len(lines):
+    line = lines[i]
+    kept.append(line)
+    i += 1
+    bare = line.replace("<<<", "   ")
+    if "<<" in bare and not HD.search(bare):
+        sys.exit(1)
+    for m in HD.finditer(bare):
+        tabs, word = m.group(1) == "-", m.group(3)
+        while i < len(lines) and (lines[i].lstrip("\t") if tabs else lines[i]) != word:
+            i += 1
+        if i >= len(lines):
+            sys.exit(1)
+        i += 1
+# A newline separates commands unless the line ends in an operator that continues
+# it. The `;` goes AFTER the newline, so a # comment, which shlex runs to the end of
+# its line, cannot swallow the commands on the lines below.
+cmd = ""
+for j, line in enumerate(kept):
+    cmd += line
+    if j < len(kept) - 1:
+        cmd += "\n" if re.search(r"(&&|\|\||\|&?)\s*$", line) else "\n;"
+# shlex ends a word at `#`; bash keeps a `#` inside a word as a literal.
+cmd = re.sub(r"(?<=[^\s;&|()<>])#", "\x00", cmd)
 lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
 lex.whitespace_split = True
 try:
@@ -116,9 +152,14 @@ try:
 except ValueError:
     sys.exit(1)
 
-OPS = {"&&", "||", ";", "|", "&", "|&", ";;", ";&", ";;&"}
+OPS = {"&&", "||", ";", "|", "&", "|&", ";;", ";&", ";;&", "&|"}
+REDIR = {">&", "<&", "&>", "&>>", ">|"}
+MASK = {";", "&", ";;", ";&", ";;&", "&|"}
 segs, ops = [[]], []
 for t in toks:
+    if t and all(c in "();<>|&" for c in t) and t not in OPS and t not in REDIR \
+            and any(c in ";|&" for c in t):
+        sys.exit(1)  # an operator run like `;(` or `|(`: cannot tell what masks what
     if t in OPS:
         ops.append(t)
         segs.append([])
@@ -127,6 +168,17 @@ for t in toks:
 
 if "||" in ops:
     sys.exit(1)
+
+
+def pipefail_on(upto):
+    on = False
+    for s in segs[:upto]:
+        if s[:1] != ["set"]:
+            continue
+        for k in range(2, len(s)):
+            if s[k] == "pipefail" and "o" in s[k - 1]:
+                on = s[k - 1].startswith("-") if s[k - 1][:1] in "-+" else on
+    return on
 
 
 def runs_verify(words):
@@ -162,13 +214,46 @@ for i, words in enumerate(segs):
     if not runs_verify(words):
         continue
     after = ops[i:]
-    if after[:1] in (["|"], ["|&"]) and not any(s[:1] == ["set"] and "pipefail" in s for s in segs[:i]):
+    if after[:1] in (["|"], ["|&"]) and not pipefail_on(i):
         continue
-    if any(o in (";", "&", ";;", ";&", ";;&") for o in after):
+    if any(o in MASK for o in after):
         continue
     sys.exit(0)
 sys.exit(1)
 PY
+}
+
+# True when the CLI reported this Bash call as a clean finish. PostToolUse is not
+# "passed": the CLI fires PostToolUseFailure only for an exit it judges an error,
+# and it reinterprets some non-zero exits as success (exit 1 from a line ending in
+# grep, diff, test or git diff arrives as "No matches found" or "Files differ" in
+# returnCodeInterpretation). A run moved to the background, by the two-minute
+# timeout or by the user, reports success the moment it moves; an interrupt does
+# not throw. All of those arrive as PostToolUse (CLI 2.1.252's Bash output schema).
+# A payload without tool_response is judged by the rest; one it cannot read is not.
+hook_bash_ran_clean() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  printf '%s' "$1" | python3 -c '
+import json, sys
+try:
+    p = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(p, dict) or p.get("hook_event_name") not in (None, "", "PostToolUse"):
+    sys.exit(1)
+ti = p.get("tool_input")
+if isinstance(ti, dict) and ti.get("run_in_background") is True:
+    sys.exit(1)
+if "tool_response" in p:
+    r = p["tool_response"]
+    if not isinstance(r, dict) or r.get("interrupted") is True or r.get("returnCodeInterpretation"):
+        sys.exit(1)
+    if r.get("backgroundTaskId") or r.get("timedOutAfterMs") is not None:
+        sys.exit(1)
+    if any(r.get(k) is True for k in ("backgroundedByUser", "backgroundedByTurnAbort", "backgroundedToDeliverMessage")):
+        sys.exit(1)
+sys.exit(0)
+'
 }
 
 # A10 — enforcement telemetry. Appends: ISO-time <TAB> rule_id <TAB> detail

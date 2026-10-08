@@ -16,29 +16,35 @@
 - **It judged the wrong tree.** A hook process starts where the session launched, which is
   the main checkout when the session works in a worktree. A worktree session was blocked
   by the main checkout's files, and its verify marker landed there too. Both hooks now
-  read the `cwd` every payload carries.
+  read the `cwd` every payload carries. A repo whose opt-in marker is untracked stays
+  opted in inside its worktrees, because the hooks also ask the main checkout.
 - **Finder files counted as source.** `.DS_Store`, `Thumbs.db` and `desktop.ini` no longer
   count as a change, including an untracked folder that holds nothing else.
 - **A mention of "verify" counted as a passing run.** `verify-record` touched the marker
   for any command containing "verify", so `gh pr checks 1591 | grep verify-src` certified
-  done with no verify run. A run now counts only when the command starts a verify or test
-  entrypoint and that run's exit status is the command's own: not piped (unless
-  `set -o pipefail`), not followed by `;`, `||` or `&`, not inside a heredoc body, and not
-  `run_in_background`. `PostToolUse` itself is the success signal, since a non-zero exit
-  arrives as `PostToolUseFailure` and the payload carries no exit code.
+  done with no verify run. A run now counts only when both hold:
+  - the command starts a verify or test entrypoint whose exit status is the command's own:
+    not piped without `set -o pipefail`, not followed by `;` or `&`, not after `||`, and
+    not inside a heredoc body (the lines after a heredoc are read as commands again);
+  - the CLI reported a clean finish. The payload carries no exit code, and `PostToolUse`
+    also fires for a non-zero exit the CLI reinterprets as success (a failing
+    `npm run verify && git diff --stat` arrives as "Files differ"), for a run the
+    two-minute timeout or the user moved to the background, and for an interrupt. None of
+    those count.
 
-**Behaviour change:** `npm run verify | tail -20` and `bash scripts/verify.sh > log; echo $?`
-no longer count as verify runs, because their exit status is not the verify's. Run the
-verify on its own, or under `set -o pipefail`; the block message now says so.
+**Behaviour change:** `npm run verify | tail -20`, `…; echo $?`, and a verify that outruns
+the Bash timeout no longer count. Run the verify on its own and in the foreground (raise
+the timeout if it is slow), or under `set -o pipefail`; the block message says so.
 
 Also released here, from #8: `claude.yml.tmpl` and `/project-init` step 10 say that the
 setup must install every package the verify command reaches, since nothing goes red in the
 `@claude` workflow when one is missing; and no filled template names a `{{TOKEN}}` inside a
 comment, where a two-line value breaks the YAML. `workflow_diagnostics` pins both.
 
-`tests/hooks_test.sh` gains 19 cases, each seen failing against 2.2.4's hooks first, with
-controls on both sides (264 in all). The payload facts above are read from Claude Code
-2.1.252's own input schemas.
+`tests/hooks_test.sh` gains 69 cases (225 → 294). Each of the 37 that are not controls was
+seen failing first, against 2.2.4's hooks or against this release's first draft, which a
+review caught recording failed and backgrounded runs. The payload facts above are read from
+Claude Code 2.1.252's own input and output schemas.
 
 **Update:** `claude plugin update dev-kit@roofadvisor`, then restart Claude Code. The
 installed plugin's copy of these hooks is what fires, not this repo's.

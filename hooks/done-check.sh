@@ -24,13 +24,14 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 # done on a half-merged tree, and verify cannot pass on conflict markers, so a block
 # only demands a run that cannot succeed. The state lives in the worktree's own git
 # dir, which is why this asks git where that is.
-gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || exit 0
-for op in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
-  if [ -e "$gitdir/$op" ]; then
-    echo "done-check: $op is present, so a merge, rebase, cherry-pick or revert is in progress in $root; not judging a half-merged tree." >&2
-    exit 0
-  fi
-done
+if gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null); then
+  for op in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [ -e "$gitdir/$op" ]; then
+      echo "done-check: $op is present, so a merge, rebase, cherry-pick or revert is in progress in $root; not judging a half-merged tree." >&2
+      exit 0
+    fi
+  done
+fi
 
 # Every added/modified/untracked path, excluding docs and config. Token
 # sources are re-admitted explicitly, ahead of the blanket extension
@@ -93,7 +94,9 @@ changed=$(printf '%s\n' "$changed" | drop_junk_folders)
 
 # Said with every block below: a verify that ran but whose status the command did not
 # carry never refreshed the marker (verify-record.sh), so say why it did not count.
-counts="A verify counts only when it runs on its own: piped, followed by ; || or &, or run in the background, the command's exit status is not the verify's."
+counts="A verify counts only when it runs on its own and finishes: piped without set -o pipefail, followed by ; or &, after ||, backgrounded or interrupted, the command's exit status is not the verify's."
+command -v python3 >/dev/null 2>&1 \
+  || counts="$counts This host has no python3, which verify-record.sh needs to recognise a verify run, so no run can clear this."
 
 marker="$root/.claude/.last-verify"
 if [ ! -f "$marker" ]; then
