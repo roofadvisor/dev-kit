@@ -1168,6 +1168,26 @@ porcelain paths with spaces, so a junk-only folder with a space in its name stil
 (fails open; rare). A command holding a quoted or escaped operator (`'|'`, `\;`) is not
 read at all, so it never counts: a safe miss, e.g. `find … -exec … \; && npm run verify`.
 
+### A29 — Rule 0 blocked a source file written after its own test · ✅ built in 2.2.6
+
+Reported from GHL-MCP on 2026-10-09 (`feat/system-link-company-contacts`): a TDD step
+wrote `src/ghl/resources/contactBulkBusinessHandler.test.ts`, then the source beside it,
+and `rule-zero.sh` blocked the source. The directory search is
+`find -iname "*<concept>*.<ext>"`, and a test named for its subject contains that stem, so
+every test-first source file in TypeScript, Python, Go or Ruby was blocked by its own test.
+
+Built: the match filter that already dropped a plan's own spec (2.1.1) also drops the new
+file's own test: `<stem>.test|spec.<ext>`, `<stem>.<kind>.test|spec.<ext>`,
+`test_<stem>.<ext>`, `<stem>_test|_spec.<ext>`. It is keyed on the full stem, so a variant
+beside its base's test still blocks. The stem is quoted in every arm, so a glob character
+in a name (`[id].tsx`) is literal. That case was seen failing with the quotes removed.
+
+Leaves alone: the directory search still matches on substring (`foo.ts` is still blocked
+by `foobar.test.ts`). The repo-wide fallback still resolves its tree from the hook
+process's cwd, which 2.2.5 recorded as left alone. A test whose name only lowercases the
+stem (`Foo.ts` with `foo.test.ts`) still blocks, because the exemption is case-sensitive
+while `find -iname` is not. That is the safe direction.
+
 ## 3 — Registry debt (PROSE that should be mechanized)
 
 From `templates/rules/REGISTRY.md`. Each already carries a promote-when trigger.

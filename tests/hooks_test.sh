@@ -324,6 +324,33 @@ check "allows README.md in a new directory"  0 rule-zero.sh "{\"tool_input\":{\"
 check "still blocks a variant in a new directory"  2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/src/elsewhere/reportV2.ts\"}}"
 check "still blocks a -final in a new directory"   2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/src/elsewhere/report-final.ts\"}}"
 
+# A source file and its own test share a stem by convention, and TDD writes the test first.
+# The directory search reads `*<stem>*.<ext>`, which a `<stem>.test.<ext>` satisfies, so the
+# source was blocked as a variant of the test that specifies it (GHL-MCP, 2026-10-09:
+# contactBulkBusinessHandler.ts after contactBulkBusinessHandler.test.ts). The same shape
+# catches every language whose test names wrap the stem: test_<stem>.py, <stem>_test.go.
+td="$tmp/src/tdd"; mkdir -p "$td"
+touch "$td/contactBulkBusinessHandler.test.ts" "$td/quote.spec.ts" "$td/Banner.test.tsx" \
+      "$td/sync.integration.test.ts" "$td/test_pricing.py" "$td/ledger_test.py" "$td/router_test.go"
+check "allows a source after its own .test.ts"       0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/contactBulkBusinessHandler.ts\"}}"
+check "allows a source after its own .spec.ts"       0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/quote.ts\"}}"
+check "allows a .tsx after its own .test.tsx"        0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/Banner.tsx\"}}"
+check "allows a source after its .<kind>.test.ts"    0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/sync.ts\"}}"
+check "allows a .py after its own test_<stem>.py"    0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/pricing.py\"}}"
+check "allows a .py after its own <stem>_test.py"    0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/ledger.py\"}}"
+check "allows a .go after its own <stem>_test.go"    0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/router.go\"}}"
+# A Next.js dynamic route's stem is a glob class if left unquoted: `[id].test.tsx` as a case
+# pattern matches i.test.tsx, never itself, and the page would stay blocked by its own test.
+mkdir -p "$tmp/pages/posts"; touch "$tmp/pages/posts/[id].test.tsx"
+check "allows [id].tsx after its own [id].test.tsx"  0 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/pages/posts/[id].tsx\"}}"
+# The exemption is the target's OWN test, keyed on its full stem — never the concept. A variant
+# beside its base's test is still a variant, and a real duplicate beside the test still blocks.
+check "still blocks a V2 beside its base's test"     2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/contactBulkBusinessHandlerV2.ts\"}}"
+touch "$td/invoice.ts" "$td/invoice.test.ts"
+check "still blocks a -final beside source and test" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/invoice-final.ts\"}}"
+touch "$td/widget.test.ts" "$td/widget-old.ts"
+check "still blocks a duplicate the test sits beside" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/widget.ts\"}}"
+
 echo "session-context.sh"
 # G-02: the load-path fix is the most load-bearing hook in the system and had no test.
 sc_out=$(cd "$tmp" && bash "$HOOKS/session-context.sh" 2>&1)

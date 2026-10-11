@@ -56,11 +56,19 @@ fi
 # artifacts with two owners, not a variant, and the first plan written under this hook was
 # blocked by its own spec (2.1.1). Drop a match that is the target's spec; everything else —
 # including a -v2 of the plan once the plan exists — still blocks.
+#
+# A source file and its own test are the same kind of pair, and TDD writes the test first:
+# `*<stem>*.ts` is satisfied by <stem>.test.ts, so the source was blocked as a variant of the
+# test that specifies it (2.2.6). Drop the target's own test — keyed on its full stem, not the
+# concept, so reportV2.ts beside report.test.ts still blocks. The stem is quoted in every arm:
+# a Next.js `[id].tsx` must match itself, not a bracket class.
 kept=""
 while IFS= read -r m; do
   [ -n "$m" ] || continue
   case "$(basename "$m")" in
     "${concept}-design.${ext}"|"${concept}-spec.${ext}") continue ;;
+    "${stem}.test.${ext}"|"${stem}.spec.${ext}"|"${stem}".*".test.${ext}"|"${stem}".*".spec.${ext}") continue ;;
+    "test_${stem}.${ext}"|"${stem}_test.${ext}"|"${stem}_spec.${ext}") continue ;;
   esac
   kept="${kept}${m}"$'\n'
 done <<< "$matches"
@@ -76,8 +84,9 @@ if [ -n "$matches" ]; then
     echo "Before creating '${base}', do one of:"
     echo "  1. Edit the existing file instead (usually correct)."
     echo "  2. If it is a second artifact, not a variant, name it for what it owns — a"
-    echo "     name sharing this stem will keep being blocked. (One pair is sanctioned:"
-    echo "     a plan beside its spec — plans/<x>.md with specs/<x>-design.md.)"
+    echo "     name sharing this stem will keep being blocked. (Two pairs are sanctioned:"
+    echo "     a plan beside its spec — plans/<x>.md with specs/<x>-design.md — and a"
+    echo "     source beside its own test — <x>.ts with <x>.test.ts, <x>.py with test_<x>.py.)"
     echo "  3. If the existing file is dead, delete it in this same change."
     echo
     echo "Do not create a variant alongside it. That is how a codebase ends up with"
