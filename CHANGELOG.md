@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.2.6 — Rule 0 stops blocking a source file written after its own test
+
+Under TDD the test comes first. `rule-zero` looks for an existing file whose name contains
+the new file's stem, and `contactBulkBusinessHandler.test.ts` contains
+`contactBulkBusinessHandler`, so the source was blocked as a "variant" of the test that
+specifies it (GHL-MCP, 2026-10-09). A file's own test is now a sanctioned pair, beside the
+plan-and-spec pair 2.1.1 already allowed:
+
+- `<x>.test.<ext>`, `<x>.spec.<ext>`, and `<x>.<kind>.test.<ext>` /
+  `<x>.<kind>.spec.<ext>` (`sync.integration.test.ts`);
+- `test_<x>.<ext>`, `<x>_test.<ext>` and `<x>_spec.<ext>`, which is how pytest, Go and RSpec
+  name them. The same search blocked `pricing.py` after `test_pricing.py` and `router.go`
+  after `router_test.go`.
+
+The exemption is keyed on the new file's full stem, not on the concept with its iteration
+suffix stripped. So `reportV2.ts` beside `report.test.ts` still blocks, and so does
+`widget.ts` when `widget-old.ts` sits next to `widget.test.ts`. The stem is matched
+literally, so a Next.js `[id].tsx` is paired with `[id].test.tsx` rather than read as a
+bracket class. The block message now names both sanctioned pairs.
+
+The exemption runs before anything else reads the matches. A Codex review of the first
+draft found that a variant's own test, written first in a new directory, kept the repo-wide
+search from running and was then dropped, so `reportV2.ts` passed while `report.ts` lived
+elsewhere. Filtering also comes before the five-line cap, which had let exempt tests crowd
+a real duplicate out of view. The cap now applies only to the list the block message prints.
+
+`tests/hooks_test.sh` gains 13 cases (308 → 321). The 8 "allows" cases were seen failing
+against 2.2.5's hook. The 5 "still blocks" controls pass on both sides, and two of them, the
+variant after its own test and the duplicate behind 30 tests, were seen failing against the
+first draft. The `[id]` case was also seen failing against a copy of the fix with the stem
+unquoted.
+
+**Update:** `claude plugin update dev-kit@roofadvisor`, then restart Claude Code.
+
 ## 2.2.5 — the Stop hook stops looping, and judges the tree you are working in
 
 `done-check` (Stop) and `verify-record` (PostToolUse:Bash) misfired in both directions

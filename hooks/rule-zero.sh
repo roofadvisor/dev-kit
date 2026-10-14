@@ -35,9 +35,41 @@ concept=$(printf '%s' "$stem" \
 [ "$concept" = "$stem" ] && [ "${#concept}" -ge 3 ] && concept="$stem"
 [ -z "$concept" ] && exit 0
 
+# A spec and its plan share a stem by convention — writing-plans puts them at
+# docs/superpowers/specs/<x>-design.md and docs/superpowers/plans/<x>.md. That is two
+# artifacts with two owners, not a variant, and the first plan written under this hook was
+# blocked by its own spec (2.1.1). Drop a match that is the target's spec; everything else —
+# including a -v2 of the plan once the plan exists — still blocks.
+#
+# A source file and its own test are the same kind of pair, and TDD writes the test first:
+# `*<stem>*.ts` is satisfied by <stem>.test.ts, so the source was blocked as a variant of the
+# test that specifies it (2.2.6). Drop the target's own test — keyed on its full stem, not the
+# concept, so reportV2.ts beside report.test.ts still blocks. The stem is quoted in every arm:
+# a Next.js `[id].tsx` must match itself, not a bracket class.
+#
+# Two orderings matter, and the first draft of 2.2.6 got both wrong. The filter runs on each
+# search's FULL output, before any cap: a `head -5` ahead of it can fill with exempt tests and
+# never show the real duplicate on line six. And it runs on the directory search BEFORE the
+# repo-wide fallback is chosen: a variant's own test, written first, was a local match that
+# kept the fallback from running and was then dropped, so reportV2.ts passed beside its own
+# test while report.ts lived elsewhere (Codex review on #13).
+drop_pairs() {
+  local m kept=""
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    case "$(basename "$m")" in
+      "${concept}-design.${ext}"|"${concept}-spec.${ext}") continue ;;
+      "${stem}.test.${ext}"|"${stem}.spec.${ext}"|"${stem}".*".test.${ext}"|"${stem}".*".spec.${ext}") continue ;;
+      "test_${stem}.${ext}"|"${stem}_test.${ext}"|"${stem}_spec.${ext}") continue ;;
+    esac
+    kept="${kept}${m}"$'\n'
+  done
+  printf '%s' "${kept%$'\n'}"
+}
+
 # Look for an existing file expressing the same concept. In this directory, always: a
 # second file of one concept beside the first is the case this rule exists for.
-matches=$(find "$dir" -maxdepth 1 -type f -iname "*${concept}*.${ext}" 2>/dev/null | head -5)
+matches=$(find "$dir" -maxdepth 1 -type f -iname "*${concept}*.${ext}" 2>/dev/null | drop_pairs)
 
 # Across the repo, only for a VARIANT — a name that carried an iteration suffix or prefix
 # (reportV2, report-final, new-report), which is evidence the author meant "another one of
@@ -48,36 +80,22 @@ matches=$(find "$dir" -maxdepth 1 -type f -iname "*${concept}*.${ext}" 2>/dev/nu
 # same-named file anywhere, and no new Next.js route or page could be written (2.2.2). The
 # evidence is the suffix, not the name, which is the same two-signal shape C-01 and C-03 use.
 if [ -z "$matches" ] && [ "$concept" != "$stem" ]; then
-  matches=$(git -C "$root" ls-files "*${concept}*.${ext}" 2>/dev/null | head -5)
+  matches=$(git -C "$root" ls-files "*${concept}*.${ext}" 2>/dev/null | drop_pairs)
 fi
-
-# A spec and its plan share a stem by convention — writing-plans puts them at
-# docs/superpowers/specs/<x>-design.md and docs/superpowers/plans/<x>.md. That is two
-# artifacts with two owners, not a variant, and the first plan written under this hook was
-# blocked by its own spec (2.1.1). Drop a match that is the target's spec; everything else —
-# including a -v2 of the plan once the plan exists — still blocks.
-kept=""
-while IFS= read -r m; do
-  [ -n "$m" ] || continue
-  case "$(basename "$m")" in
-    "${concept}-design.${ext}"|"${concept}-spec.${ext}") continue ;;
-  esac
-  kept="${kept}${m}"$'\n'
-done <<< "$matches"
-matches="${kept%$'\n'}"
 
 if [ -n "$matches" ]; then
   log_deny "C-05" "$path"
   {
     echo "BLOCKED by Rule 0 — a canonical home may already exist for '${concept}'."
     echo "Existing:"
-    printf '%s\n' "$matches" | sed 's/^/  /'
+    printf '%s\n' "$matches" | head -5 | sed 's/^/  /'
     echo
     echo "Before creating '${base}', do one of:"
     echo "  1. Edit the existing file instead (usually correct)."
     echo "  2. If it is a second artifact, not a variant, name it for what it owns — a"
-    echo "     name sharing this stem will keep being blocked. (One pair is sanctioned:"
-    echo "     a plan beside its spec — plans/<x>.md with specs/<x>-design.md.)"
+    echo "     name sharing this stem will keep being blocked. (Two pairs are sanctioned:"
+    echo "     a plan beside its spec — plans/<x>.md with specs/<x>-design.md — and a"
+    echo "     source beside its own test — <x>.ts with <x>.test.ts, <x>.py with test_<x>.py.)"
     echo "  3. If the existing file is dead, delete it in this same change."
     echo
     echo "Do not create a variant alongside it. That is how a codebase ends up with"
