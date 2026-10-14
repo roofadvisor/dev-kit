@@ -58,38 +58,32 @@ fi
 # marker — with a cap, exit 0 (wrong); without one, exit 2. Truncate only the
 # human-facing sample below (already scoped to its own `head -5`), never the
 # list the mtime loop walks.
+#
+# Every untracked FILE, not every untracked folder (--untracked-files=all). By
+# default git collapses a new folder to one `dir/` line, which no per-file filter
+# here can judge, and both directions misfired (2.2.7). A folder holding only config
+# counted as source: Codex's .codex/hooks.json blocked a session on 2026-10-14,
+# though the same file tracked is excluded as config. And the staleness loop below
+# reads files, so it skipped a `dir/` line: verify, then add a folder of new source,
+# and done was certified on code no verify had seen. 2.2.5 patched the first
+# direction for OS junk alone, with a find per folder; listing the files retires
+# that. A nested repository is still one `dir/` line, as git does not descend into
+# it: it counts as a change, but has no mtime to compare.
+#
+# OS junk is not source: Finder writes .DS_Store into every folder it opens, and
+# three of them in a main checkout blocked a session on 2026-09-30.
+status=$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null \
+  | sed 's/^...//' \
+  | grep -Ev '^(docs|\.github|\.claude)/')
 changed=$(
   {
-    git -C "$root" status --porcelain 2>/dev/null \
-      | sed 's/^...//' \
-      | grep -Ev '^(docs|\.github|\.claude)/' \
+    printf '%s\n' "$status" \
       | grep -E '(^|/)design-tokens\.json$|(^|/)kit/tokens/.*\.json$'
-    git -C "$root" status --porcelain 2>/dev/null \
-      | sed 's/^...//' \
-      | grep -Ev '^(docs|\.github|\.claude)/' \
+    printf '%s\n' "$status" \
       | grep -Ev '\.(md|txt|json|ya?ml|lock)$' \
       | grep -Ev '(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini)$'
   }
 )
-# OS junk is not source: Finder writes .DS_Store into every folder it opens, and
-# three of them in a main checkout blocked a session on 2026-09-30. The filter above
-# drops the files; an untracked folder shows as one `dir/` line, so drop that too
-# when it holds nothing else. A folder find cannot read is kept, not excused.
-# A function, not a `case` inside $(...): bash 3.2, macOS's /bin/bash, closes the
-# substitution at a pattern's `)`.
-drop_junk_folders() {
-  local f other
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    if [ "${f%/}" != "$f" ] \
-        && other=$(find "$root/$f" -type f ! -name .DS_Store ! -name Thumbs.db ! -name desktop.ini -print -quit 2>/dev/null) \
-        && [ -z "$other" ]; then
-      continue
-    fi
-    printf '%s\n' "$f"
-  done
-}
-changed=$(printf '%s\n' "$changed" | drop_junk_folders)
 [ -z "$changed" ] && exit 0
 
 # Said with every block below: a verify that ran but whose status the command did not

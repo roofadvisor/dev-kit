@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.7 — the Stop hook judges the files in a new folder, not the folder
+
+`git status` collapses a new, untracked folder to one `dir/` line. `done-check` filters
+paths file by file, so it could not judge what was inside, and it misfired both ways:
+
+- **A folder holding only config blocked the stop.** Codex had written `.codex/hooks.json`
+  into a worktree, and on 2026-10-14 the 2.2.6 hook blocked a session over `.codex/`. On
+  its own that file is excluded as config, like `package.json`. 2.2.5 had patched this for
+  a folder holding only Finder junk; config was the same gap.
+- **A folder of new source passed after a verify.** The check for changes newer than the
+  last verify compares file times, and a `dir/` line is not a file, so it was skipped. Run
+  verify, then add `src/feature/`, and the hook certified done on code no verify had seen.
+
+The hook now lists every untracked file (`--untracked-files=all`) and filters each one,
+so a new folder is judged by what it holds. This replaces 2.2.5's per-folder `find`.
+
+`tests/hooks_test.sh`: 4 new cases, 1 retired (321 → 324). Both fixes were seen failing
+against 2.2.6, and both controls pass on both sides. The retired case stubbed out that
+per-folder `find`, which no longer exists. On this repo's own worktree, 2.2.6 listed
+`.codex/` as a source change and 2.2.7 does not.
+
+**Update:** `claude plugin marketplace update roofadvisor`, then
+`claude plugin update dev-kit@roofadvisor`, then restart Claude Code.
+
 ## 2.2.6 — Rule 0 stops blocking a source file written after its own test
 
 Under TDD the test comes first. `rule-zero` looks for an existing file whose name contains
