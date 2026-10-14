@@ -754,6 +754,29 @@ dcp "OS junk alone is not a source change, even in a new folder" 0 "$jk" "$(stop
 echo y >> "$jk/a.ts"
 dcp "control: OS junk does not hide a real change beside it" 2 "$jk" "$(stop_json "$jk")"
 
+# git status collapses an untracked folder to one `dir/` line, so the per-file filters
+# never saw what was inside it. Both directions misfired (2.2.7). A folder holding only
+# config counted as source: Codex's .codex/hooks.json blocked a session here on
+# 2026-10-14, though the same file anywhere tracked is excluded as config. And a folder of
+# NEW source was skipped by the staleness loop, which reads files and a `dir/` line is not
+# one: verify, then add src/feature/, and done was certified on code no verify had seen.
+uf=$(mktemp -d)
+( cd "$uf" && git init -q && git config user.email t@t && git config user.name t \
+    && echo x > a.ts && git add -A && git commit -qm init \
+    && mkdir .codex && echo '{}' > .codex/hooks.json ); mkstate "$uf"
+dcp "a new folder holding only config is not a source change" 0 "$uf" "$(stop_json "$uf")"
+mkdir "$uf/feature"; echo '{}' > "$uf/feature/config.json"; echo x > "$uf/feature/index.ts"
+dcp "control: a new folder holding config and source still counts" 2 "$uf" "$(stop_json "$uf")"
+uv=$(mktemp -d)
+( cd "$uv" && git init -q && git config user.email t@t && git config user.name t \
+    && echo x > a.ts && git add -A && git commit -qm init ); mkstate "$uv"
+mkdir -p "$uv/src/feature"; echo x > "$uv/src/feature/index.ts"; touch -t 202001010000 "$uv/src/feature/index.ts"
+touch "$uv/.claude/.last-verify"
+dcp "control: a new folder written before the last verify passes" 0 "$uv" "$(stop_json "$uv")"
+touch -t 202001010000 "$uv/.claude/.last-verify"; touch "$uv/src/feature/index.ts"
+dcp "a new folder of source written after the last verify is stale" 2 "$uv" "$(stop_json "$uv")"
+rm -rf "$uf" "$uv"
+
 # The session's own tree. A hook process starts where the session launched — the
 # main checkout when Claude works in a worktree (CLAUDE_PROJECT_DIR stays there) —
 # so judging its own cwd judges the wrong tree: on 2026-09-30 main's stray files
@@ -796,16 +819,9 @@ for mode in nojq bare; do
 done
 rm -rf "$fb"
 
-# A folder find cannot read is kept, not excused. find is stubbed to fail: git does
-# not list a folder it cannot read, so a chmod fixture would never reach the check.
-fs=$(mktemp -d)
-( cd "$fs" && git init -q && git config user.email t@t && git config user.name t \
-    && echo x > a.ts && git add -A && git commit -qm init && mkdir assets && touch assets/.DS_Store ); mkstate "$fs"
-findstub=$(mktemp -d); printf '#!/bin/sh\nexit 1\n' > "$findstub/find"; chmod +x "$findstub/find"
-printf '%s' "$(stop_json "$fs")" | (cd "$fs" && PATH="$findstub:$PATH" bash "$HOOKS/done-check.sh") >/dev/null 2>&1; got=$?
-if [ "$got" -eq 2 ]; then echo "  PASS  a junk-looking folder find cannot read still counts"; pass=$((pass+1))
-else echo "  FAIL  a junk-looking folder find cannot read still counts (want exit 2, got $got)"; fail=$((fail+1)); fi
-rm -rf "$fs" "$findstub"
+# 2.2.5 had a case here for a junk-looking folder that find could not read. 2.2.7 lists
+# untracked files through git instead of a find per folder, so that path no longer exists;
+# git's own listing is covered by the untracked-folder cases above.
 
 # A linked worktree carries only what is committed. A repo whose opt-in marker is
 # untracked opted in from its main checkout, and entering the session's worktree

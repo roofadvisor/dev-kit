@@ -1195,6 +1195,26 @@ process's cwd, which 2.2.5 recorded as left alone. A test whose name only lowerc
 stem (`Foo.ts` with `foo.test.ts`) still blocks, because the exemption is case-sensitive
 while `find -iname` is not. That is the safe direction.
 
+### A30 — the Stop hook judged a new folder as one line · ✅ built in 2.2.7
+
+Found live on 2026-10-14, right after Ian updated to 2.2.6. Codex had written
+`.codex/hooks.json` into this repo's worktree, and `done-check` blocked the stop over
+`.codex/`. `git status --porcelain` shows a new untracked folder as one `dir/` line, so
+every per-file filter (config extensions, OS junk, token sources) was blind to its
+contents. The same line hid the dangerous direction too. The staleness loop reads only
+files, so a folder of new source written after a verify was never compared with the
+marker, and done was certified.
+
+Built: `git status --porcelain --untracked-files=all`, read once and filtered per file.
+2.2.5's `drop_junk_folders` (a `find` per folder line) is retired, along with its
+stubbed-find case. Red first: the config-only folder and the stale new folder both failed
+against 2.2.6, and their controls passed on both sides.
+
+Leaves alone: a nested repository is still one `dir/` line, because git does not descend
+into it. It counts as a change but has no mtime to compare. Listing every untracked file
+costs one `stat` fork per file in the staleness loop. That is the same per-file cost as a
+tracked change, and it only grows when a large untracked folder is not gitignored.
+
 ## 3 — Registry debt (PROSE that should be mechanized)
 
 From `templates/rules/REGISTRY.md`. Each already carries a promote-when trigger.
