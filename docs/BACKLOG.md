@@ -1182,6 +1182,13 @@ file's own test: `<stem>.test|spec.<ext>`, `<stem>.<kind>.test|spec.<ext>`,
 beside its base's test still blocks. The stem is quoted in every arm, so a glob character
 in a name (`[id].tsx`) is literal. That case was seen failing with the quotes removed.
 
+A Codex review on #13 caught the first draft filtering too late. It ran after the
+directory search had already decided the repo-wide fallback was not needed, so a variant
+whose own test came first (`reportV2.test.ts`, then `reportV2.ts`, with `report.ts`
+elsewhere) passed. The filter also ran after a `head -5` cap, which a stem with many tests
+could fill. It is now a function applied to each search's full output, before the fallback
+is chosen. The cap only trims the message.
+
 Leaves alone: the directory search still matches on substring (`foo.ts` is still blocked
 by `foobar.test.ts`). The repo-wide fallback still resolves its tree from the hook
 process's cwd, which 2.2.5 recorded as left alone. A test whose name only lowercases the

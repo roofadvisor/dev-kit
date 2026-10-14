@@ -20,9 +20,17 @@ suffix stripped. So `reportV2.ts` beside `report.test.ts` still blocks, and so d
 literally, so a Next.js `[id].tsx` is paired with `[id].test.tsx` rather than read as a
 bracket class. The block message now names both sanctioned pairs.
 
-`tests/hooks_test.sh` gains 11 cases (308 → 319). The 8 "allows" cases were seen failing
-against 2.2.5's hook. The 3 "still blocks" controls pass on both sides. The `[id]` case was
-also seen failing against a copy of the fix with the stem unquoted.
+The exemption runs before anything else reads the matches. A Codex review of the first
+draft found that a variant's own test, written first in a new directory, kept the repo-wide
+search from running and was then dropped, so `reportV2.ts` passed while `report.ts` lived
+elsewhere. Filtering also comes before the five-line cap, which had let exempt tests crowd
+a real duplicate out of view. The cap now applies only to the list the block message prints.
+
+`tests/hooks_test.sh` gains 13 cases (308 → 321). The 8 "allows" cases were seen failing
+against 2.2.5's hook. The 5 "still blocks" controls pass on both sides, and two of them, the
+variant after its own test and the duplicate behind 30 tests, were seen failing against the
+first draft. The `[id]` case was also seen failing against a copy of the fix with the stem
+unquoted.
 
 **Update:** `claude plugin update dev-kit@roofadvisor`, then restart Claude Code.
 

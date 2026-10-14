@@ -350,6 +350,18 @@ touch "$td/invoice.ts" "$td/invoice.test.ts"
 check "still blocks a -final beside source and test" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/invoice-final.ts\"}}"
 touch "$td/widget.test.ts" "$td/widget-old.ts"
 check "still blocks a duplicate the test sits beside" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$td/widget.ts\"}}"
+# The exemption must run BEFORE the repo-wide fallback is chosen (Codex on #13). A variant's own
+# test, written first in a new directory, is a local match: it kept the fallback from running,
+# was then dropped, and reportV2.ts passed although report.ts lives in the fixture root.
+mkdir -p "$tmp/src/tdd-variant"; touch "$tmp/src/tdd-variant/reportV2.test.ts"
+check "still blocks a variant written after its own test" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/src/tdd-variant/reportV2.ts\"}}"
+# ...and the match list is filtered before it is capped. A `head -5` ahead of the filter can
+# fill with exempt tests, so the real duplicate past the fifth line is never seen. find lists in
+# directory order, not sorted; on APFS these 30 names put gadget-old.ts ninth, so the case is
+# red against a capped filter there. Wherever the order differs it is still a valid control.
+tc="$tmp/src/tdd-cap"; mkdir -p "$tc"; touch "$tc/gadget-old.ts"
+for k in $(seq -w 1 30); do touch "$tc/gadget.c$k.test.ts"; done
+check "still blocks a duplicate behind many own tests" 2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tc/gadget.ts\"}}"
 
 echo "session-context.sh"
 # G-02: the load-path fix is the most load-bearing hook in the system and had no test.
