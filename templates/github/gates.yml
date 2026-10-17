@@ -91,12 +91,12 @@ jobs:
       # Without it a repo with no token fails this gate on every migration PR, with the
       # action's opaque "is_error:true" as the only explanation. preflight.yml is where a
       # missing secret is reported loudly, once.
-      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      HAS_CLAUDE_TOKEN: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - name: Skip when the credential is not configured
         if: env.HAS_CLAUDE_TOKEN != 'true'
         run: |
-          echo "::notice title=Skipped::CLAUDE_CODE_OAUTH_TOKEN is not set, so the schema review cannot run. preflight.yml reports the missing secret as an error."
+          echo "::notice title=Skipped::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set, so the schema review cannot run. preflight.yml reports the missing secret as an error."
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - name: Detect migrations
@@ -112,6 +112,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         if: env.HAS_CLAUDE_TOKEN == 'true' && steps.detect.outputs.found == 'true'
         with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Run the schema-reviewer audit on the migrations in this diff.

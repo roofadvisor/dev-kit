@@ -32,12 +32,12 @@ jobs:
       # credential is simply absent — it runs and fails on every mention, and a check that
       # always fails is a check people stop reading. preflight.yml is where a missing
       # secret is reported loudly, once.
-      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      HAS_CLAUDE_TOKEN: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - name: Skip when the credential is not configured
         if: env.HAS_CLAUDE_TOKEN != 'true'
         run: |
-          echo "::notice title=Skipped::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so there is nothing to run. preflight.yml reports the missing secret as an error; until it is added this job passes without doing anything."
+          echo "::notice title=Skipped::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set on this repository, so there is nothing to run. preflight.yml reports the missing secret as an error; until one is added this job passes without doing anything."
       - uses: actions/checkout@v4
         if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
@@ -60,6 +60,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # A headless run denies any tool it was not given, so the verify command has to
           # be named here or Claude cannot run what the system prompt just told it to run.
@@ -70,19 +71,23 @@ jobs:
       # the result text (base-action/src/run-claude-sdk.ts), so an auth failure reads as a
       # bare "is_error:true" — one repo spent a month unable to tell a rejected token from
       # anything else. The unsanitized messages are still on disk in `execution_file`.
-      # When no model turn was billed the result text is the API's own error rather than
-      # Claude's output, so printing it exposes nothing from the repo; a billed failure
-      # prints only the counters, and show_full_output is how you read that one.
+      # The raw result text is printed only when no turn was billed AND at most one turn ran:
+      # then it is the API's own error, not Claude's output. Cost alone is not that signal —
+      # a subscription (OAuth) run reports total_cost_usd 0 whatever it did
+      # (claude-code-action#1614). Anything else prints only the counters, and
+      # show_full_output is how you read it.
       - name: Say why Claude failed
         if: failure() && steps.claude.outputs.execution_file != ''
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
-          jq -r '
-            map(select(.type == "result")) | last // {} |
+          # A JSON array on most paths and JSONL on others: slurping, then flattening an array
+          # value, reads both and keeps the LAST result when a stream carries several.
+          jq -s -r '
+            [.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // {} |
             "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns) cost_usd=\(.total_cost_usd)",
-            (if (.total_cost_usd // 0) == 0
+            (if (.total_cost_usd // 0) == 0 and (.num_turns // 0) <= 1
              then "::error title=Claude did not run::\(.result // "no result text")"
-             else "::error title=Claude failed after a billed turn::result text withheld; rerun with show_full_output: true to read it"
+             else "::error title=Claude failed after it ran::result text withheld; rerun with show_full_output: true to read it"
              end)
           ' "$EXECUTION_FILE"
