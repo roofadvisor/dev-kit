@@ -1,6 +1,11 @@
 name: claude-code-review
-# Automatic review — scoped to paths where a miss is expensive.
+# Automatic review — scoped to paths where a miss is expensive, and run against the project's
+# own baseline rules (CLAUDE.md and .claude/rules/, as /project-init wrote them).
 # Everything else gets verify.yml and human eyes; that is enough.
+#
+# Edit `paths:` and the prompt's priority list for the project. Keep the guards: each one is
+# a failure that happened in a repo running this file (roofadvisor/roof-club#429 carries the
+# reasoning, round by round).
 
 on:
   pull_request:
@@ -40,6 +45,13 @@ on:
       # Never silently
       - '**/.env.example'
 
+# One review run per PR. The last step counts a review posted since its own run began, so an
+# older run still going when a newer push lands could post inside the newer run's window and
+# be counted as its review. Cancelling the older run removes that overlap.
+concurrency:
+  group: claude-code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -56,12 +68,17 @@ jobs:
       # credential is simply absent — it runs and fails on every PR, and a check that
       # always fails is a check people stop reading. preflight.yml is where a missing
       # secret is reported loudly, once.
-      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      # Either credential runs the review. ANTHROPIC_API_KEY first: it is billed per use and
+      # has no session window. CLAUDE_CODE_OAUTH_TOKEN is the fallback: a subscription token
+      # shared with every interactive session on the account, so its window runs dry exactly
+      # when the account is busiest (2026-10-16: every review in two repos at once). With both
+      # set, Claude Code uses the API key.
+      HAS_CLAUDE_TOKEN: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - name: Skip when the credential is not configured
         if: env.HAS_CLAUDE_TOKEN != 'true'
         run: |
-          echo "::notice title=Skipped::CLAUDE_CODE_OAUTH_TOKEN is not set on this repository, so there is nothing to run. preflight.yml reports the missing secret as an error; until it is added this job passes without doing anything."
+          echo "::notice title=Skipped::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set on this repository, so there is nothing to run. preflight.yml reports the missing secret as an error; until one is added this job passes without doing anything."
       - uses: actions/checkout@v4
         if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
@@ -69,8 +86,11 @@ jobs:
       # The App runs only when the PR's copy of this workflow is identical to the default
       # branch's; otherwise it skips and the action exits in about two seconds having done
       # nothing ("Workflow validation failed"). That is expected on a PR that edits this
-      # file, and on any branch cut before it last changed. Ask the same question here, so
-      # the judgement below can tell that skip apart from a review that should have happened.
+      # file. Ask the same question here, so the judgement below can tell that skip apart
+      # from a review that should have happened. The diff is taken on the checked-out merge
+      # commit: a branch cut before this file last changed, that does not edit it, carries
+      # the default branch's copy there and reads differs=false — if the App ever refuses
+      # such a branch, the last step fails it red ("No execution record"), never green.
       - name: Does this PR change the review workflow?
         id: workflow_validation
         if: env.HAS_CLAUDE_TOKEN == 'true'
@@ -79,22 +99,41 @@ jobs:
         run: |
           set -uo pipefail
           git fetch --no-tags --quiet origin "${BASE_REF}" || true
-          if git diff --quiet "origin/${BASE_REF}" -- .github/workflows/claude-code-review.yml; then
-            echo "differs=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "differs=true" >> "$GITHUB_OUTPUT"
-          fi
+          # `git diff --quiet` exits 1 for "differs" and 128 for an error (a base ref it cannot
+          # resolve). Only 1 is a validation skip: read as one, an error would turn the check
+          # green with no review.
+          rc=0
+          git diff --quiet "origin/${BASE_REF}" -- .github/workflows/claude-code-review.yml || rc=$?
+          case "$rc" in
+            0) echo "differs=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "differs=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error title=Could not compare the workflow::git diff against origin/${BASE_REF} exited ${rc}, so nothing can tell a validation skip from a review that should have run."
+               exit 1 ;;
+          esac
+      # When this run's review began, so the last step can ask GitHub for a review THIS run
+      # posted rather than trust the turn count.
+      - name: When the review started
+        id: started
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - id: claude
         uses: anthropics/claude-code-action@v1
         if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Review only the changed files in this PR, against CLAUDE.md and .claude/rules/.
-            Check the Definition of Done in docs/DEFINITION.md.
+            Review only the changed files in this PR, against this project's baseline
+            rules. Read them before the diff:
+            - CLAUDE.md, and .claude/rules/org.md when it exists;
+            - every module in .claude/rules/ whose frontmatter says `always_apply: true`;
+            - each other module in .claude/rules/ whose area the changed files touch —
+              the rules index in CLAUDE.md names every module and its area.
+            .claude/rules/manifest.json lists the rule IDs this project holds. Name the
+            rule each finding breaks. Check the Definition of Done in docs/DEFINITION.md.
 
             Prioritize, in order:
             1. Authorization missing or wrong on a new or changed route
@@ -106,57 +145,168 @@ jobs:
             6. N+1 query, or a query inside a loop
             7. Vendor response shapes leaking past an adapter
             8. Hashed payload containing a timestamp, uuid, path, or float
+            9. Anything else a baseline rule above forbids
 
             Be specific: file and line. Do not restate what the PR does.
             Do not comment on style — the formatter owns that.
-            If it is clean, reply with one line saying so.
+            If it is clean, say so in one line.
 
-            Post everything on the PR; nothing else is read. Use `gh pr comment`
-            for the summary, including the one-line clean verdict, and
-            `mcp__github_inline_comment__create_inline_comment` with
-            `confirmed: true` for a finding tied to a line.
+            Post everything on the PR as a review; nothing else is read. Always post
+            one summary with `gh pr review <n> --comment --body "..."`, including the
+            one-line clean verdict, and start its body with the line
+            <!-- claude-code-review -->
+            Use `mcp__github_inline_comment__create_inline_comment` with
+            `confirmed: true` for a finding tied to a line. Never `gh pr comment`, and
+            never `--approve` or `--request-changes`.
           # A run with a prompt is agent mode, which installs no comment tools unless they
           # are named here, and a headless run denies any tool it was not given — so
           # without this line the review has nowhere to post and the PR sees nothing
           # (claude-code-action v1: src/mcp/install-mcp-server.ts).
+          #
+          # A review, not an issue comment: a merge gate that pulls a PR's findings reads
+          # pulls/<n>/reviews and pulls/<n>/comments, and an issue comment is in neither, so
+          # a verdict posted with `gh pr comment` is one the gate cannot see
+          # (roofadvisor/roof-club#429). `--comment`, not `--approve`: an App's approval can
+          # count toward a required-reviews rule, and a bot clearing branch protection is not
+          # a review a person did. A gate that waits for "a reviewer reported" must not count
+          # this review, or its notice below, as that signal: the check finishes before
+          # `gh pr checks --watch` returns, so it is already there on the first poll and ends
+          # the wait before any other reviewer reports (roof-club's AUTO_REVIEWERS).
+          # `Bash(gh pr review:*)` is a prefix match, so it also admits --approve and
+          # --request-changes; the prompt forbids both, and the last step fails red and
+          # dismisses either one if it appears, since a prompt injection in the diff could
+          # still ask for it.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr review:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
       # The action sanitizes a failed run down to subtype/is_error/duration/cost and hides
       # the result text (base-action/src/run-claude-sdk.ts), so an auth failure reads as a
       # bare "is_error:true" — one repo spent a month unable to tell a rejected token from
       # anything else. The unsanitized messages are still on disk in `execution_file`.
-      # When no model turn was billed the result text is the API's own error rather than
-      # Claude's output, so printing it exposes nothing from the repo; a billed failure
-      # prints only the counters, and show_full_output is how you read that one.
+      # The raw result text is printed only when no turn was billed AND at most one turn ran:
+      # then it is the API's own error, not Claude's output. Cost alone is not that signal —
+      # a subscription (OAuth) run reports total_cost_usd 0 whatever it did
+      # (claude-code-action#1614). Anything else prints only the counters, and
+      # show_full_output is how you read it.
+      #
+      # Out of tokens: when the OAuth token's session window runs dry ("You've hit your
+      # session limit · resets 10:10pm (UTC)") or the API key's credit does ("Credit balance
+      # is too low"), the review did not run and nothing is wrong with the PR. Say that for
+      # what it is, and hand the review to whoever owns the PR: a review on the PR saying so
+      # is what a review-pulling gate prints. The check stays red — a review did not happen.
+      # tests/workflow_diagnostics_test.sh runs this shell against each failure shape.
       - name: Say why Claude failed
+        id: why
         if: failure() && steps.claude.outputs.execution_file != ''
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          jq -r '
-            map(select(.type == "result")) | last // {} |
-            "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns) cost_usd=\(.total_cost_usd)",
-            (if (.total_cost_usd // 0) == 0
-             then "::error title=Claude did not run::\(.result // "no result text")"
-             else "::error title=Claude failed after a billed turn::result text withheld; rerun with show_full_output: true to read it"
-             end)
-          ' "$EXECUTION_FILE"
+          set -uo pipefail
+          # A JSON array on most paths and JSONL on others: slurping, then flattening an array
+          # value, reads both and keeps the LAST result when a stream carries several.
+          RESULT=$(jq -s -c '[.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // {}' "$EXECUTION_FILE" 2>/dev/null || echo '{}')
+          echo "$RESULT" | jq -r '"subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns) cost_usd=\(.total_cost_usd)"'
+          COST=$(echo "$RESULT" | jq -r '.total_cost_usd // 0')
+          TURNS=$(echo "$RESULT" | jq -r '.num_turns // 0')
+          if [ "$COST" = "0" ] && [ "${TURNS:-0}" -le 1 ] 2>/dev/null; then SAFE=true; else SAFE=false; fi
+          TEXT=$(echo "$RESULT" | jq -r '.result // "no result text"')
+          # Only the account-window and credit messages. A bare "rate limit" is not one:
+          # rate_limit_error is also a transient throughput 429, an ordinary failure
+          # (https://docs.anthropic.com/en/api/errors). Looked for BEFORE the billed-turn
+          # branch, because a window can run dry partway through a review that already billed
+          # turns. Anchored to the wordings the limit messages use (either apostrophe), and
+          # scanned only on an error result, so model text that merely says "usage limit" is
+          # never read as one. The extract — the phrase and a reset time of a fixed shape
+          # ("10:10pm (UTC)", "Oct 20, 3pm"), never free text after it — is all that is ever
+          # published; the rest of the text may be the model's output.
+          IS_ERROR=$(echo "$RESULT" | jq -r '.is_error // false')
+          LIMIT_RE="(you.{1,3}ve hit your [a-z0-9 -]{0,20}limit|you.{1,3}re out of [a-z ]{0,15}usage|(5-hour|daily|weekly|monthly|session|usage) limit reached|credit balance is too low|out of (tokens|credits))( .{1,3} resets ([A-Z][a-z]{2} [0-9]{1,2}, )?[0-9]{1,2}(:[0-9]{2})? ?[apAP][mM]( \([A-Za-z]+\))?)?"
+          LIMIT=""
+          if [ "$IS_ERROR" = "true" ]; then LIMIT=$(echo "$TEXT" | grep -oiE "$LIMIT_RE" | head -1 || true); fi
+          if [ -n "$LIMIT" ]; then
+            SHOWN="Limit reached: ${LIMIT}."
+            echo "out_of_tokens=true" >> "$GITHUB_OUTPUT"
+            echo "::error title=Out of tokens::${SHOWN}"
+            # One notice per head commit: a re-run during the same spent window does not stack
+            # another. Captured, not piped to `grep -q`: under pipefail an early-exiting grep
+            # can SIGPIPE gh and turn a found notice into "not found".
+            EXISTING=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and .commit_id == \"${HEAD_SHA}\" and (.body | startswith(\"**Out of tokens\"))) | .id" 2>/dev/null || true)
+            if [ -n "$EXISTING" ]; then
+              echo "An out-of-tokens notice is already on ${HEAD_SHA}; not posting another."
+              exit 0
+            fi
+            gh pr review "$PR_NUMBER" --comment --body "$(printf '%s\n\n%s\n\n%s' \
+              "**Out of tokens — the automatic review did not run.** ${SHOWN}" \
+              "This is the account's session window or API credit, not this PR. Review it another way before merging and say so here, or re-run the \`review\` job after the reset." \
+              "— claude-code-review.yml")" \
+              || echo "::warning title=Could not post the out-of-tokens review::the annotation above is the only record"
+            exit 0
+          fi
+          if [ "$SAFE" != "true" ]; then
+            echo "::error title=Claude failed after it ran::result text withheld (turns=${TURNS}, cost_usd=${COST}); rerun with show_full_output: true to read it"
+            exit 0
+          fi
+          echo "::error title=Claude did not run::${TEXT}"
       # The action reports a session that never began as SUCCESS: measured 2026-09-19, a
       # review check went green in 1.8 seconds having posted nothing. "Say why Claude
       # failed" cannot see that, because nothing failed. A review that took no turn is not
-      # a review, and a check that passes without doing its work is silent degradation.
+      # a review, a session that ran but posted nothing is not one either, and a check that
+      # passes without doing its work is silent degradation.
       # tests/workflow_diagnostics_test.sh runs this shell against each session shape.
       - name: A green review means a review happened
         if: always() && steps.claude.conclusion != 'skipped'
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           WORKFLOW_DIFFERS: ${{ steps.workflow_validation.outputs.differs }}
+          OUT_OF_TOKENS: ${{ steps.why.outputs.out_of_tokens }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          STARTED_AT: ${{ steps.started.outputs.at }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # The login the action posts as: the Claude GitHub App's. Change it only if the
+          # action is given another App's token (its `github_token` input).
+          REVIEW_BOT: claude[bot]
         run: |
           set -uo pipefail
+          # First, before any early exit: an approval or a change request from the bot is never
+          # this review's verdict, since it can clear or block branch protection. A session that
+          # approved (a prompt injection in the diff can ask for it; `Bash(gh pr review:*)` is
+          # a prefix match) and then errored or ran out of tokens must not leave it standing.
+          # So this runs on every path, needing only the start time. A missing start time
+          # would otherwise match every review the bot ever posted, so it fails closed.
+          if [ -z "${STARTED_AT:-}" ]; then
+            echo "::error title=No start time::The step that records when the review began left nothing, so nothing can tell this run's review from an older one."
+            exit 1
+          fi
+          # A failed query fails red, not just counts nothing: --paginate keeps the pages that
+          # loaded before a later page failed, so this run's summary could count while an
+          # approval on the unread page went unseen.
+          if ! REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+            --jq ".[] | select(.user.login == \"${REVIEW_BOT}\" and .submitted_at >= \"${STARTED_AT}\") | [.id, .state, ((.body // \"\") | contains(\"<!-- claude-code-review -->\"))] | @tsv" 2>/dev/null); then
+            echo "::error title=Could not read the reviews::GitHub did not answer the reviews query, so nothing shows whether this run reviewed, approved or requested changes."
+            exit 1
+          fi
+          VERDICTS=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "APPROVED" || $2 == "CHANGES_REQUESTED" { print $1 }')
+          if [ -n "$VERDICTS" ]; then
+            for id in $VERDICTS; do
+              gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${id}/dismissals" \
+                -f message="claude-code-review posts comments only; an approval or change request from it is dismissed." -f event=DISMISS >/dev/null 2>&1 \
+                || echo "::warning title=Could not dismiss review ${id}::dismiss it by hand"
+            done
+            echo "::error title=The review approved or requested changes::${REVIEW_BOT} submitted an approval or a change request (review $(echo $VERDICTS)), which the prompt forbids and which can move branch protection. It was dismissed; read the diff for a prompt injection, and review the PR another way."
+            exit 1
+          fi
           if [ "${WORKFLOW_DIFFERS:-false}" = "true" ]; then
             echo "::notice title=Review skipped by workflow validation::This PR's copy of .github/workflows/claude-code-review.yml differs from ${BASE_REF:-the default branch}, so the App refuses to run it. The review returns once this PR merges, or once ${BASE_REF:-the default branch} is merged into the branch."
             exit 0
+          fi
+          if [ "${OUT_OF_TOKENS:-false}" = "true" ]; then
+            echo "::error title=Out of tokens::The automatic review did not run — the account's session window or API credit is spent, not this PR. The review posted on the PR says what to do."
+            exit 1
           fi
           if [ -z "${EXECUTION_FILE:-}" ] || [ ! -f "${EXECUTION_FILE}" ]; then
             echo "::error title=No execution record::The action published no execution file, so nothing shows whether a review happened."
@@ -164,9 +314,11 @@ jobs:
           fi
           # A JSON array on most paths and JSONL on others: slurping, then flattening an
           # array value, reads both and keeps the LAST result when a stream carries several.
-          RESULT=$(jq -s -c '[.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // empty' "${EXECUTION_FILE}" 2>/dev/null)
+          # `|| true`: a truncated or invalid file (a killed run) would otherwise end the step
+          # under bash -e with no annotation at all; it is reported below instead.
+          RESULT=$(jq -s -c '[.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // empty' "${EXECUTION_FILE}" 2>/dev/null || true)
           if [ -z "${RESULT}" ]; then
-            echo "::error title=No result event::The execution file carries no result event, so nothing shows whether a review happened."
+            echo "::error title=No result event::The execution file carries no readable result event, so nothing shows whether a review happened."
             exit 1
           fi
           TURNS=$(echo "$RESULT" | jq -r '.num_turns // 0')
@@ -179,8 +331,20 @@ jobs:
             echo "::error title=The review errored::The session ended in an error, so this PR was not reviewed. The step above prints the reason."
             exit 1
           fi
-          if [ "${TURNS}" -le 1 ] 2>/dev/null; then
+          # Asked as "more than one", so a count that is not a number fails closed.
+          if ! [ "${TURNS}" -gt 1 ] 2>/dev/null; then
             echo "::error title=The review never happened::The session ended after ${TURNS} turn(s) without reviewing anything, so a green check here would mean nothing."
             exit 1
           fi
-          echo "The review ran: ${TURNS} turns."
+          # Turns prove a session ran, not that it posted: a review that forgot the posting
+          # command, or whose `gh pr review` failed before it finished normally, still ends
+          # is_error=false. Count this run's summary: a COMMENTED review from the bot, since
+          # this run began, whose body carries the prompt's marker. Not any bot review or
+          # inline comment: @claude in tag mode (claude.yml) replies in a review thread as the
+          # same bot, and that reply is not this review.
+          POSTED=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "COMMENTED" && $3 == "true"' | grep -c . || true)
+          if ! [ "${POSTED:-0}" -gt 0 ] 2>/dev/null; then
+            echo "::error title=No review was posted::The session ran ${TURNS} turns but posted no summary review on this PR since ${STARTED_AT}, so a gate that pulls the review would find nothing. Re-run the job, or review the PR another way."
+            exit 1
+          fi
+          echo "The review ran: ${TURNS} turns, ${POSTED} posted."
