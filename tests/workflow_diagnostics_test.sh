@@ -65,6 +65,9 @@ mkdir -p "$tmp/bin"
 cat > "$tmp/bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH_LOG"
+if [ "$1" = api ] && [ "$2" = -X ]; then
+  case "$4" in */dismissals) exit "${GH_DISMISS_RC:-0}" ;; *) exit 1 ;; esac
+fi
 if [ "$1" = api ]; then
   path=$2; expr="."; shift 2
   while [ $# -gt 0 ]; do case "$1" in --jq) expr=$2; shift 2 ;; *) shift ;; esac; done
@@ -80,14 +83,33 @@ if [ "$1 $2" = "pr review" ]; then exit "${GH_REVIEW_RC:-0}"; fi
 exit 1
 GH
 chmod +x "$tmp/bin/gh"
+mkdir -p "$tmp/gitbin"
+# The git stub, for the workflow-validation question only: fetch succeeds, diff exits GIT_DIFF_RC.
+cat > "$tmp/gitbin/git" <<'GIT'
+#!/usr/bin/env bash
+case "$1" in fetch) exit 0 ;; diff) exit "${GIT_DIFF_RC:-0}" ;; *) exit 2 ;; esac
+GIT
+chmod +x "$tmp/gitbin/git"
 export GH_LOG="$tmp/gh.log" GH_FIX="$tmp"
 STARTED="2026-10-17T12:00:00Z"
 fixtures() {  # reviews-json  comments-json
   printf '%s' "$1" > "$tmp/reviews.json"; printf '%s' "$2" > "$tmp/comments.json"
 }
-OURS='[{"id":7,"user":{"login":"claude[bot]"},"submitted_at":"2026-10-17T12:03:00Z","commit_id":"abc","body":"clean"}]'
-OLD='[{"id":6,"user":{"login":"claude[bot]"},"submitted_at":"2026-10-16T09:00:00Z","commit_id":"old","body":"clean"}]'
-SOMEONE='[{"id":8,"user":{"login":"chatgpt-codex-connector[bot]"},"submitted_at":"2026-10-17T12:04:00Z","commit_id":"abc","body":"x"}]'
+MARK='<!-- claude-code-review -->'
+review() {  # id login submitted_at state body
+  jq -cn --argjson id "$1" --arg l "$2" --arg at "$3" --arg st "$4" --arg b "$5" \
+    '{id:$id,user:{login:$l},submitted_at:$at,commit_id:"abc",state:$st,body:$b}'
+}
+OURS="[$(review 7 'claude[bot]' 2026-10-17T12:03:00Z COMMENTED "$MARK
+clean")]"
+OLD="[$(review 6 'claude[bot]' 2026-10-16T09:00:00Z COMMENTED "$MARK
+clean")]"
+SOMEONE="[$(review 8 'chatgpt-codex-connector[bot]' 2026-10-17T12:04:00Z COMMENTED "$MARK x")]"
+UNMARKED="[$(review 10 'claude[bot]' 2026-10-17T12:05:00Z COMMENTED "I am on it — tracking reply to @claude")]"
+NOBODY='[{"id":11,"user":{"login":"claude[bot]"},"submitted_at":"2026-10-17T12:05:00Z","commit_id":"abc","state":"COMMENTED","body":null}]'
+APPROVE="[$(review 7 'claude[bot]' 2026-10-17T12:03:00Z COMMENTED "$MARK
+clean"),$(review 12 'claude[bot]' 2026-10-17T12:04:00Z APPROVED "")]"
+CHANGES="[$(review 13 'claude[bot]' 2026-10-17T12:04:00Z CHANGES_REQUESTED "$MARK blocked")]"
 INLINE='[{"id":9,"user":{"login":"claude[bot]"},"created_at":"2026-10-17T12:02:00Z"}]'
 
 rc=0; out=""
@@ -117,6 +139,7 @@ judge "$(result 1 false 0.039)" false;    verdict "a billed session with no turn
 judge "$(result 7 false 0)" false;        verdict "turns with no cost still pass"            0 "The review ran: 7 turns, 1 posted."
 judge "none" false;                       verdict "no execution record fails"                1 "No execution record"
 judge '[{"type":"system","subtype":"init"}]' false; verdict "a file with no result event fails" 1 "No result event"
+judge '[{"type":"result","is_error":false,"num_tu' false; verdict "a truncated file fails with a reason, not silently" 1 "No result event"
 printf -v jsonl '{"type":"result","is_error":false,"num_turns":9}\n{"type":"result","is_error":false,"num_turns":1}'
 judge "$jsonl" false;                     verdict "JSONL is read, and the last result wins"  1 "turns=1"
 judge '[{"type":"result","is_error":false,"num_turns":"many"}]' false; verdict "a turn count that is not a number fails closed" 1 "The review never happened"
@@ -132,10 +155,36 @@ judge "$(result 9 false 0)" false;        verdict "an older run's review does no
 fixtures "$SOMEONE" '[]'
 judge "$(result 9 false 0)" false;        verdict "another reviewer's review does not count" 1 "No review was posted"
 fixtures '[]' "$INLINE"
-judge "$(result 9 false 0)" false;        verdict "an inline comment this run counts"        0 "The review ran: 9 turns, 1 posted."
+judge "$(result 9 false 0)" false;        verdict "an inline comment alone is not the summary" 1 "No review was posted"
+fixtures "$UNMARKED" "$INLINE"
+judge "$(result 9 false 0)" false;        verdict "a bot reply without the marker (tag mode) does not count" 1 "No review was posted"
+fixtures "[$(review 14 'claude[bot]' 2026-10-17T12:05:00Z DISMISSED "$MARK clean")]" '[]'
+judge "$(result 9 false 0)" false;        verdict "a dismissed review is not the summary"     1 "No review was posted"
+fixtures "$NOBODY" '[]'
+judge "$(result 9 false 0)" false;        verdict "a bot review with no body does not count" 1 "No review was posted"
+fixtures "$APPROVE" '[]'
+judge "$(result 9 false 0)" false
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF 'approved or requested changes' && grep -q 'reviews/12/dismissals' "$GH_LOG" && ! grep -q 'reviews/7/dismissals' "$GH_LOG"; then
+  ok "an approval from the bot fails red and is dismissed, even beside a summary"
+else bad "an approval from the bot was not refused and dismissed (rc=$rc; log: $(tr '\n' ' ' < "$GH_LOG" | cut -c1-140))"; fi
+fixtures "$CHANGES" '[]'
+judge "$(result 9 false 0)" false GH_DISMISS_RC=1
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF 'Could not dismiss review 13'; then ok "a change request fails red, and a failed dismissal says so"
+else bad "a change request was not refused (rc=$rc)"; fi
 fixtures "$OURS" '[]'
 judge "$(result 9 false 0)" false GH_FAIL=1; verdict "a failed query counts nothing, so fails closed" 1 "No review was posted"
 judge "$(result 9 false 0)" false STARTED_AT=; verdict "a missing start time fails closed"   1 "No start time"
+
+echo "the workflow-validation question, per git outcome"
+wv_script=$(extract "Does this PR change the review workflow?")
+wv() {  # git diff rc
+  : > "$tmp/output"
+  out=$(env PATH="$tmp/gitbin:$PATH" GITHUB_OUTPUT="$tmp/output" BASE_REF=main GIT_DIFF_RC="$1" bash -e -c "$wv_script" 2>&1); rc=$?
+}
+wv 0;   [ "$rc" -eq 0 ] && grep -qx 'differs=false' "$tmp/output" && ok "an unchanged workflow reads differs=false" || bad "an unchanged workflow was misread (rc=$rc)"
+wv 1;   [ "$rc" -eq 0 ] && grep -qx 'differs=true' "$tmp/output" && ok "a changed workflow reads differs=true" || bad "a changed workflow was misread (rc=$rc)"
+wv 128; [ "$rc" -eq 1 ] && ! grep -q differs "$tmp/output" && printf '%s' "$out" | grep -qF 'Could not compare the workflow' \
+  && ok "a git error fails red, never a validation skip" || bad "a git error read as a validation skip (rc=$rc; $(cat "$tmp/output"))"
 
 echo "why a failed run failed, per failure shape"
 why() {  # payload  [extra VAR=value …]
@@ -211,6 +260,10 @@ has "$REVIEW" "id: workflow_validation"                                         
 has "$REVIEW" 'WORKFLOW_DIFFERS: ${{ steps.workflow_validation.outputs.differs }}' && ok "review: the judgement knows about a validation skip" || bad "review: a validation skip would read as a failed review"
 has "$REVIEW" 'OUT_OF_TOKENS: ${{ steps.why.outputs.out_of_tokens }}'           && ok "review: the judgement knows a run was out of tokens" || bad "review: an out-of-tokens run would be judged as an ordinary error"
 has "$REVIEW" 'STARTED_AT: ${{ steps.started.outputs.at }}'                     && ok "review: the judgement knows when this run began"     || bad "review: the judgement cannot tell this run's review from an older one"
+has "$REVIEW" "        id: why"                                                && ok "review: the failure step has the id the judgement reads" || bad "review: no 'id: why', so out of tokens reads as an ordinary error"
+has "$REVIEW" "        id: started"                                            && ok "review: the start-time step has the id the judgement reads" || bad "review: no 'id: started', so every review fails 'No start time'"
+has "$REVIEW" "types: [opened, synchronize, ready_for_review]"                  && ok "review: runs when a draft goes ready"                || bad "review: a draft that goes ready is never reviewed"
+has "$REVIEW" "            <!-- claude-code-review -->"                         && ok "review: the prompt asks for the marker the judgement counts" || bad "review: the prompt never asks for the marker, so no review would count"
 has "$REVIEW" 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}'             && ok "review: the notice is keyed to the head commit"      || bad "review: the out-of-tokens notice cannot be deduplicated per commit"
 if python3 - "$REVIEW" <<'PY'
 import sys, yaml
@@ -224,7 +277,7 @@ echo "the review posts where a merge gate reads, and never approves"
 allowed=$(grep -oE -- '--allowedTools "[^"]+"' "$REVIEW")
 case "$allowed" in *'Bash(gh pr review:*)'*) ok "review: allowed to post a review" ;; *) bad "review: not allowed to post a review" ;; esac
 case "$allowed" in *'gh pr comment'*) bad "review: allowed to post an issue comment, which a review-pulling gate never reads" ;; *) ok "review: not allowed to post an issue comment" ;; esac
-has "$REVIEW" 'Never `gh pr comment`' && has "$REVIEW" 'never `--approve`' \
+has "$REVIEW" 'Never `gh pr comment`' && has "$REVIEW" 'never `--approve` or `--request-changes`' \
   && ok "review: the prompt forbids an issue comment and an approval" || bad "review: the prompt does not forbid an issue comment and an approval"
 
 echo "the review runs against the project's baseline rules"
@@ -335,17 +388,21 @@ echo "the comment workflow's failure printer withholds model output"
 # whatever it did (claude-code-action#1614), so cost alone must not decide to print the text.
 tag_jq=$(python3 - "$TAG" <<'PY'
 import re, sys
-m = re.search(r"jq -r '\n(.*?)\n\s*' \"\$EXECUTION_FILE\"", open(sys.argv[1], encoding="utf-8").read(), re.S)
+m = re.search(r"jq -s -r '\n(.*?)\n\s*' \"\$EXECUTION_FILE\"", open(sys.argv[1], encoding="utf-8").read(), re.S)
 print(m.group(1) if m else "")
 PY
 )
 if [ -z "$tag_jq" ]; then bad "claude.yml.tmpl: could not extract its failure printer"
 else
-  got=$(result 5 true 0 "secret model output" | jq -r "$tag_jq")
+  got=$(result 5 true 0 "secret model output" | jq -s -r "$tag_jq")
   case "$got" in *"secret model output"*) bad "claude.yml.tmpl prints an OAuth run's result text after it took turns" ;;
                  *"result text withheld"*) ok "claude.yml.tmpl withholds an OAuth run's text after it took turns" ;;
                  *) bad "claude.yml.tmpl printed neither the text nor the withheld notice: $got" ;; esac
-  got=$(result 1 true 0 "Invalid API key" | jq -r "$tag_jq")
+  printf -v tag_jsonl '{"type":"system"}\n{"type":"result","is_error":true,"num_turns":5,"total_cost_usd":0,"result":"secret model output"}'
+  got=$(printf '%s' "$tag_jsonl" | jq -s -r "$tag_jq" 2>&1)
+  case "$got" in *"result text withheld"*) ok "claude.yml.tmpl reads a JSONL execution file" ;;
+                 *) bad "claude.yml.tmpl cannot read a JSONL execution file: $got" ;; esac
+  got=$(result 1 true 0 "Invalid API key" | jq -s -r "$tag_jq")
   case "$got" in *"Claude did not run::Invalid API key"*) ok "claude.yml.tmpl prints the API's own error when no turn ran" ;;
                  *) bad "claude.yml.tmpl hid the API's own error: $got" ;; esac
 fi

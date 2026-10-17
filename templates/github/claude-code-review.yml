@@ -99,11 +99,17 @@ jobs:
         run: |
           set -uo pipefail
           git fetch --no-tags --quiet origin "${BASE_REF}" || true
-          if git diff --quiet "origin/${BASE_REF}" -- .github/workflows/claude-code-review.yml; then
-            echo "differs=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "differs=true" >> "$GITHUB_OUTPUT"
-          fi
+          # `git diff --quiet` exits 1 for "differs" and 128 for an error (a base ref it cannot
+          # resolve). Only 1 is a validation skip: read as one, an error would turn the check
+          # green with no review.
+          rc=0
+          git diff --quiet "origin/${BASE_REF}" -- .github/workflows/claude-code-review.yml || rc=$?
+          case "$rc" in
+            0) echo "differs=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "differs=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error title=Could not compare the workflow::git diff against origin/${BASE_REF} exited ${rc}, so nothing can tell a validation skip from a review that should have run."
+               exit 1 ;;
+          esac
       # When this run's review began, so the last step can ask GitHub for a review THIS run
       # posted rather than trust the turn count.
       - name: When the review started
@@ -145,11 +151,13 @@ jobs:
             Do not comment on style — the formatter owns that.
             If it is clean, say so in one line.
 
-            Post everything on the PR as a review; nothing else is read. Use
-            `gh pr review <n> --comment --body "..."` for the summary, including the
-            one-line clean verdict, and `mcp__github_inline_comment__create_inline_comment`
-            with `confirmed: true` for a finding tied to a line. Never `gh pr comment`,
-            and never `--approve`.
+            Post everything on the PR as a review; nothing else is read. Always post
+            one summary with `gh pr review <n> --comment --body "..."`, including the
+            one-line clean verdict, and start its body with the line
+            <!-- claude-code-review -->
+            Use `mcp__github_inline_comment__create_inline_comment` with
+            `confirmed: true` for a finding tied to a line. Never `gh pr comment`, and
+            never `--approve` or `--request-changes`.
           # A run with a prompt is agent mode, which installs no comment tools unless they
           # are named here, and a headless run denies any tool it was not given — so
           # without this line the review has nowhere to post and the PR sees nothing
@@ -164,6 +172,10 @@ jobs:
           # this review, or its notice below, as that signal: the check finishes before
           # `gh pr checks --watch` returns, so it is already there on the first poll and ends
           # the wait before any other reviewer reports (roof-club's AUTO_REVIEWERS).
+          # `Bash(gh pr review:*)` is a prefix match, so it also admits --approve and
+          # --request-changes; the prompt forbids both, and the last step fails red and
+          # dismisses either one if it appears, since a prompt injection in the diff could
+          # still ask for it.
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr review:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
       # The action sanitizes a failed run down to subtype/is_error/duration/cost and hides
@@ -274,9 +286,11 @@ jobs:
           fi
           # A JSON array on most paths and JSONL on others: slurping, then flattening an
           # array value, reads both and keeps the LAST result when a stream carries several.
-          RESULT=$(jq -s -c '[.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // empty' "${EXECUTION_FILE}" 2>/dev/null)
+          # `|| true`: a truncated or invalid file (a killed run) would otherwise end the step
+          # under bash -e with no annotation at all; it is reported below instead.
+          RESULT=$(jq -s -c '[.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // empty' "${EXECUTION_FILE}" 2>/dev/null || true)
           if [ -z "${RESULT}" ]; then
-            echo "::error title=No result event::The execution file carries no result event, so nothing shows whether a review happened."
+            echo "::error title=No result event::The execution file carries no readable result event, so nothing shows whether a review happened."
             exit 1
           fi
           TURNS=$(echo "$RESULT" | jq -r '.num_turns // 0')
@@ -296,23 +310,33 @@ jobs:
           fi
           # Turns prove a session ran, not that it posted: a review that forgot the posting
           # command, or whose `gh pr review` failed before it finished normally, still ends
-          # is_error=false. Ask GitHub for a review or inline comment from the bot since this
-          # run began. A failed query counts nothing, so this fails closed — and so does a
-          # missing start time, which would otherwise match every review the bot ever posted.
+          # is_error=false. Ask GitHub for this run's summary: a COMMENTED review from the bot,
+          # since this run began, whose body carries the prompt's marker. Not any bot review or
+          # inline comment: @claude in tag mode (claude.yml) replies in a review thread as the
+          # same bot, and that reply is not this review. A failed query counts nothing, so this
+          # fails closed — and so does a missing start time, which would otherwise match every
+          # review the bot ever posted.
           if [ -z "${STARTED_AT:-}" ]; then
             echo "::error title=No start time::The step that records when the review began left nothing, so nothing can tell this run's review from an older one."
             exit 1
           fi
-          POSTED=$(
-            {
-              gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-                --jq ".[] | select(.user.login == \"${REVIEW_BOT}\" and .submitted_at >= \"${STARTED_AT}\") | .id"
-              gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" --paginate \
-                --jq ".[] | select(.user.login == \"${REVIEW_BOT}\" and .created_at >= \"${STARTED_AT}\") | .id"
-            } 2>/dev/null | grep -c . || true
-          )
+          REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+            --jq ".[] | select(.user.login == \"${REVIEW_BOT}\" and .submitted_at >= \"${STARTED_AT}\") | [.id, .state, ((.body // \"\") | contains(\"<!-- claude-code-review -->\"))] | @tsv" 2>/dev/null || true)
+          # An approval or a change request from the bot is never this review's verdict: it can
+          # clear or block branch protection. Dismiss it, and fail.
+          VERDICTS=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "APPROVED" || $2 == "CHANGES_REQUESTED" { print $1 }')
+          if [ -n "$VERDICTS" ]; then
+            for id in $VERDICTS; do
+              gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${id}/dismissals" \
+                -f message="claude-code-review posts comments only; an approval or change request from it is dismissed." -f event=DISMISS >/dev/null 2>&1 \
+                || echo "::warning title=Could not dismiss review ${id}::dismiss it by hand"
+            done
+            echo "::error title=The review approved or requested changes::${REVIEW_BOT} submitted an approval or a change request (review $(echo $VERDICTS)), which the prompt forbids and which can move branch protection. It was dismissed; read the diff for a prompt injection, and review the PR another way."
+            exit 1
+          fi
+          POSTED=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "COMMENTED" && $3 == "true"' | grep -c . || true)
           if ! [ "${POSTED:-0}" -gt 0 ] 2>/dev/null; then
-            echo "::error title=No review was posted::The session ran ${TURNS} turns but posted no review or inline comment on this PR since ${STARTED_AT}, so a gate that pulls the review would find nothing. Re-run the job, or review the PR another way."
+            echo "::error title=No review was posted::The session ran ${TURNS} turns but posted no summary review on this PR since ${STARTED_AT}, so a gate that pulls the review would find nothing. Re-run the job, or review the PR another way."
             exit 1
           fi
           echo "The review ran: ${TURNS} turns, ${POSTED} posted."

@@ -81,8 +81,10 @@ jobs:
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
-          jq -r '
-            map(select(.type == "result")) | last // {} |
+          # A JSON array on most paths and JSONL on others: slurping, then flattening an array
+          # value, reads both and keeps the LAST result when a stream carries several.
+          jq -s -r '
+            [.[] | if type == "array" then .[] else . end | select(.type == "result")] | last // {} |
             "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns) cost_usd=\(.total_cost_usd)",
             (if (.total_cost_usd // 0) == 0 and (.num_turns // 0) <= 1
              then "::error title=Claude did not run::\(.result // "no result text")"

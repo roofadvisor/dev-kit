@@ -21,11 +21,20 @@ said so or told anyone to review another way.
 - **No raw result text after the model ran.** A subscription run reports cost 0 whatever it
   did (claude-code-action#1614), so cost alone no longer decides that the text is the API's own
   error. It is printed only when cost is 0 and at most one turn ran. `claude.yml.tmpl`'s
-  failure printer had the same leak and has the same fix.
-- **Green means a review was posted.** Turns prove a session ran, not that it posted. The last
-  step asks GitHub for a review or inline comment from `claude[bot]` since this run began. A
-  failed query, a missing start time or a turn count that is not a number all fail closed. A
-  per-PR concurrency group cancels an older run, so it cannot post inside a newer run's window.
+  failure printer had the same leak and has the same fix; it now also reads a JSONL execution
+  file, which it errored on before.
+- **Green means this run's summary was posted.** Turns prove a session ran, not that it
+  posted. The last step asks GitHub for a `COMMENTED` review from `claude[bot]`, posted since
+  this run began, whose body carries the prompt's `<!-- claude-code-review -->` marker. An
+  inline comment or an unmarked bot reply does not count: `@claude` in tag mode replies in a
+  review thread as the same bot. A failed query, a missing start time, a turn count that is not
+  a number, an unreadable execution file and a `git diff` error in the validation question all
+  fail red. A per-PR concurrency group cancels an older run, so it cannot post inside a newer
+  run's window.
+- **An approval or change request from the bot is refused.** `Bash(gh pr review:*)` is a
+  prefix match, so the prompt's ban is not enough against a prompt injection in the diff. The
+  last step dismisses any `APPROVED` or `CHANGES_REQUESTED` review the bot submitted during the
+  run and fails red.
 - **Posted as a review, never an issue comment or an approval.** A gate that pulls a PR's
   findings reads its reviews and inline comments, and a verdict posted with `gh pr comment`
   is in neither. `--comment`, never `--approve`: an App's approval can count toward a
@@ -36,7 +45,7 @@ said so or told anyone to review another way.
 
 `tests/workflow_diagnostics_test.sh` now runs both steps' own shell under the runner's
 `bash -e`, against a `gh` stub that applies the step's own `--jq` filters to fixtures
-(28 → 77). Each new guard was mutated out of the template, and its case went red. Against
+(28 → 91). Each new guard was mutated out of the template, and its case went red. Against
 2.2.7's templates, the credential, both-inputs and OAuth-leak cases fail.
 
 **Existing repos are not changed.** Copy the template in by hand where you want it, keeping
