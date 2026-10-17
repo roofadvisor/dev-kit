@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.3.0 — the review template runs on either credential, says "out of tokens", and proves it posted
+
+`templates/github/claude-code-review.yml` takes in what roofadvisor/roof-club#429 learned
+over several review rounds. On 2026-10-16 every automatic review in two repos failed at once
+as "The review errored": the shared subscription token's session window was spent, and nothing
+said so or told anyone to review another way.
+
+- **Either credential.** `ANTHROPIC_API_KEY` first: it is billed per use and has no session
+  window. `CLAUDE_CODE_OAUTH_TOKEN` is the fallback. Either one enables the job; with neither
+  it still passes with a notice. `claude.yml.tmpl` and `gates.yml` gate the same way and hand
+  the action both, and `preflight.yml` accepts either, so a repo holding only the API key is
+  neither reported missing nor silently skipped.
+- **Out of tokens.** A spent session window or API credit ("You've hit your session limit ·
+  resets 10:10pm (UTC)", "Credit balance is too low") now reads as *Out of tokens*. It is
+  matched only on an error result, against the wordings the limit messages use, never a bare
+  throughput 429. Only the limit phrase and a reset time of a fixed shape are published, never
+  the rest of the result text. The job posts one review per head commit saying the review did
+  not run and what to do, and the check stays red.
+- **No raw result text after the model ran.** A subscription run reports cost 0 whatever it
+  did (claude-code-action#1614), so cost alone no longer decides that the text is the API's own
+  error. It is printed only when cost is 0 and at most one turn ran. `claude.yml.tmpl`'s
+  failure printer had the same leak and has the same fix.
+- **Green means a review was posted.** Turns prove a session ran, not that it posted. The last
+  step asks GitHub for a review or inline comment from `claude[bot]` since this run began. A
+  failed query, a missing start time or a turn count that is not a number all fail closed. A
+  per-PR concurrency group cancels an older run, so it cannot post inside a newer run's window.
+- **Posted as a review, never an issue comment or an approval.** A gate that pulls a PR's
+  findings reads its reviews and inline comments, and a verdict posted with `gh pr comment`
+  is in neither. `--comment`, never `--approve`: an App's approval can count toward a
+  required-reviews rule.
+- **Against the project's baseline rules.** The prompt names what to read before the diff:
+  `CLAUDE.md`, `.claude/rules/org.md`, every `always_apply: true` module, and each module for
+  an area the diff touches. It also asks each finding to name the rule it breaks.
+
+`tests/workflow_diagnostics_test.sh` now runs both steps' own shell under the runner's
+`bash -e`, against a `gh` stub that applies the step's own `--jq` filters to fixtures
+(28 → 77). Each new guard was mutated out of the template, and its case went red. Against
+2.2.7's templates, the credential, both-inputs and OAuth-leak cases fail.
+
+**Existing repos are not changed.** Copy the template in by hand where you want it, keeping
+that repo's `paths:` and prompt, and set the secret yourself:
+`gh secret set ANTHROPIC_API_KEY --repo <owner>/<repo>`.
+
+**Update:** `claude plugin marketplace update roofadvisor`, then
+`claude plugin update dev-kit@roofadvisor`, then restart Claude Code.
+
 ## 2.2.7 — the Stop hook judges the files in a new folder, not the folder
 
 `git status` collapses a new, untracked folder to one `dir/` line. `done-check` filters

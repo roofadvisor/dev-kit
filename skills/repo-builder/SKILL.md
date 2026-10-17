@@ -80,7 +80,8 @@ Then add the repo to the Work DB's `Repo` select options via `/notion-sync`.
 **Secrets and variables are the user's job.** State exactly what they need and where, then move on:
 
 ```
-Org-level secret:    CLAUDE_CODE_OAUTH_TOKEN   (claude setup-token)
+Org-level secret:    ANTHROPIC_API_KEY         (preferred: billed per use, no session window)
+                or:  CLAUDE_CODE_OAUTH_TOKEN   (fallback: claude setup-token; shares the subscription window)
 Org-level secret:    NOTION_TOKEN
 Org-level variable:  NOTION_WORK_DB
 ```
@@ -125,7 +126,7 @@ VERIFY:   PASS
 WORK DB:  <linked | not configured>
 
 YOURS TO DO
-  1. Add org secrets: CLAUDE_CODE_OAUTH_TOKEN, NOTION_TOKEN
+  1. Add org secrets: ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN), NOTION_TOKEN
   2. Add org variable: NOTION_WORK_DB
   3. Share the Work DB with the Notion integration
 ```
