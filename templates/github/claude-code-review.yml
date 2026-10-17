@@ -272,6 +272,34 @@ jobs:
           REVIEW_BOT: claude[bot]
         run: |
           set -uo pipefail
+          # First, before any early exit: an approval or a change request from the bot is never
+          # this review's verdict, since it can clear or block branch protection. A session that
+          # approved (a prompt injection in the diff can ask for it; `Bash(gh pr review:*)` is
+          # a prefix match) and then errored or ran out of tokens must not leave it standing.
+          # So this runs on every path, needing only the start time. A missing start time
+          # would otherwise match every review the bot ever posted, so it fails closed.
+          if [ -z "${STARTED_AT:-}" ]; then
+            echo "::error title=No start time::The step that records when the review began left nothing, so nothing can tell this run's review from an older one."
+            exit 1
+          fi
+          # A failed query fails red, not just counts nothing: --paginate keeps the pages that
+          # loaded before a later page failed, so this run's summary could count while an
+          # approval on the unread page went unseen.
+          if ! REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+            --jq ".[] | select(.user.login == \"${REVIEW_BOT}\" and .submitted_at >= \"${STARTED_AT}\") | [.id, .state, ((.body // \"\") | contains(\"<!-- claude-code-review -->\"))] | @tsv" 2>/dev/null); then
+            echo "::error title=Could not read the reviews::GitHub did not answer the reviews query, so nothing shows whether this run reviewed, approved or requested changes."
+            exit 1
+          fi
+          VERDICTS=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "APPROVED" || $2 == "CHANGES_REQUESTED" { print $1 }')
+          if [ -n "$VERDICTS" ]; then
+            for id in $VERDICTS; do
+              gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${id}/dismissals" \
+                -f message="claude-code-review posts comments only; an approval or change request from it is dismissed." -f event=DISMISS >/dev/null 2>&1 \
+                || echo "::warning title=Could not dismiss review ${id}::dismiss it by hand"
+            done
+            echo "::error title=The review approved or requested changes::${REVIEW_BOT} submitted an approval or a change request (review $(echo $VERDICTS)), which the prompt forbids and which can move branch protection. It was dismissed; read the diff for a prompt injection, and review the PR another way."
+            exit 1
+          fi
           if [ "${WORKFLOW_DIFFERS:-false}" = "true" ]; then
             echo "::notice title=Review skipped by workflow validation::This PR's copy of .github/workflows/claude-code-review.yml differs from ${BASE_REF:-the default branch}, so the App refuses to run it. The review returns once this PR merges, or once ${BASE_REF:-the default branch} is merged into the branch."
             exit 0
@@ -310,30 +338,10 @@ jobs:
           fi
           # Turns prove a session ran, not that it posted: a review that forgot the posting
           # command, or whose `gh pr review` failed before it finished normally, still ends
-          # is_error=false. Ask GitHub for this run's summary: a COMMENTED review from the bot,
-          # since this run began, whose body carries the prompt's marker. Not any bot review or
+          # is_error=false. Count this run's summary: a COMMENTED review from the bot, since
+          # this run began, whose body carries the prompt's marker. Not any bot review or
           # inline comment: @claude in tag mode (claude.yml) replies in a review thread as the
-          # same bot, and that reply is not this review. A failed query counts nothing, so this
-          # fails closed — and so does a missing start time, which would otherwise match every
-          # review the bot ever posted.
-          if [ -z "${STARTED_AT:-}" ]; then
-            echo "::error title=No start time::The step that records when the review began left nothing, so nothing can tell this run's review from an older one."
-            exit 1
-          fi
-          REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-            --jq ".[] | select(.user.login == \"${REVIEW_BOT}\" and .submitted_at >= \"${STARTED_AT}\") | [.id, .state, ((.body // \"\") | contains(\"<!-- claude-code-review -->\"))] | @tsv" 2>/dev/null || true)
-          # An approval or a change request from the bot is never this review's verdict: it can
-          # clear or block branch protection. Dismiss it, and fail.
-          VERDICTS=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "APPROVED" || $2 == "CHANGES_REQUESTED" { print $1 }')
-          if [ -n "$VERDICTS" ]; then
-            for id in $VERDICTS; do
-              gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${id}/dismissals" \
-                -f message="claude-code-review posts comments only; an approval or change request from it is dismissed." -f event=DISMISS >/dev/null 2>&1 \
-                || echo "::warning title=Could not dismiss review ${id}::dismiss it by hand"
-            done
-            echo "::error title=The review approved or requested changes::${REVIEW_BOT} submitted an approval or a change request (review $(echo $VERDICTS)), which the prompt forbids and which can move branch protection. It was dismissed; read the diff for a prompt injection, and review the PR another way."
-            exit 1
-          fi
+          # same bot, and that reply is not this review.
           POSTED=$(printf '%s\n' "$REVIEWS" | awk -F'\t' '$2 == "COMMENTED" && $3 == "true"' | grep -c . || true)
           if ! [ "${POSTED:-0}" -gt 0 ] 2>/dev/null; then
             echo "::error title=No review was posted::The session ran ${TURNS} turns but posted no summary review on this PR since ${STARTED_AT}, so a gate that pulls the review would find nothing. Re-run the job, or review the PR another way."

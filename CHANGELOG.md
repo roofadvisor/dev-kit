@@ -34,7 +34,9 @@ said so or told anyone to review another way.
 - **An approval or change request from the bot is refused.** `Bash(gh pr review:*)` is a
   prefix match, so the prompt's ban is not enough against a prompt injection in the diff. The
   last step dismisses any `APPROVED` or `CHANGES_REQUESTED` review the bot submitted during the
-  run and fails red.
+  run and fails red. It does this first, on every path, so an approval cannot outlive a run
+  that then errored or ran out of tokens. A reviews query that fails on any page fails red,
+  since `--paginate` keeps the pages read before the failure.
 - **Posted as a review, never an issue comment or an approval.** A gate that pulls a PR's
   findings reads its reviews and inline comments, and a verdict posted with `gh pr comment`
   is in neither. `--comment`, never `--approve`: an App's approval can count toward a
@@ -45,7 +47,7 @@ said so or told anyone to review another way.
 
 `tests/workflow_diagnostics_test.sh` now runs both steps' own shell under the runner's
 `bash -e`, against a `gh` stub that applies the step's own `--jq` filters to fixtures
-(28 → 91). Each new guard was mutated out of the template, and its case went red. Against
+(28 → 97). Each new guard was mutated out of the template, and its case went red. Against
 2.2.7's templates, the credential, both-inputs and OAuth-leak cases fail.
 
 **Existing repos are not changed.** Copy the template in by hand where you want it, keeping

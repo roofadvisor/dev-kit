@@ -72,6 +72,11 @@ if [ "$1" = api ]; then
   path=$2; expr="."; shift 2
   while [ $# -gt 0 ]; do case "$1" in --jq) expr=$2; shift 2 ;; *) shift ;; esac; done
   [ -n "${GH_FAIL:-}" ] && { echo "gh: HTTP 502" >&2; exit 1; }
+  # A later page failing after the first printed: what --paginate does on a mid-listing 502.
+  if [ -n "${GH_PARTIAL:-}" ]; then
+    case "$path" in */reviews) jq -r "$expr" "$GH_FIX/reviews.json" ;; esac
+    echo "gh: HTTP 502 on page 2" >&2; exit 1
+  fi
   case "$path" in
     */reviews)  jq -r "$expr" "$GH_FIX/reviews.json" ;;
     */comments) jq -r "$expr" "$GH_FIX/comments.json" ;;
@@ -167,12 +172,24 @@ judge "$(result 9 false 0)" false
 if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF 'approved or requested changes' && grep -q 'reviews/12/dismissals' "$GH_LOG" && ! grep -q 'reviews/7/dismissals' "$GH_LOG"; then
   ok "an approval from the bot fails red and is dismissed, even beside a summary"
 else bad "an approval from the bot was not refused and dismissed (rc=$rc; log: $(tr '\n' ' ' < "$GH_LOG" | cut -c1-140))"; fi
+for shape in "errored:$(result 9 true 0)" "never began:$(result 1 false 0)" "workflow differs:none" "no execution record:none"; do
+  fixtures "$APPROVE" '[]'
+  name=${shape%%:*}; payload=${shape#*:}
+  if [ "$name" = "workflow differs" ]; then judge "$payload" true; else judge "$payload" false; fi
+  if [ "$rc" -eq 1 ] && grep -q 'reviews/12/dismissals' "$GH_LOG"; then ok "an approval is dismissed and fails red even when the run $name"
+  else bad "an approval survived a run that $name (rc=$rc)"; fi
+done
+fixtures "$APPROVE" '[]'
+judge "$(result 9 false 0)" false OUT_OF_TOKENS=true
+if [ "$rc" -eq 1 ] && grep -q 'reviews/12/dismissals' "$GH_LOG"; then ok "an approval is dismissed even when the run was out of tokens"
+else bad "an approval survived an out-of-tokens run (rc=$rc)"; fi
 fixtures "$CHANGES" '[]'
 judge "$(result 9 false 0)" false GH_DISMISS_RC=1
 if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF 'Could not dismiss review 13'; then ok "a change request fails red, and a failed dismissal says so"
 else bad "a change request was not refused (rc=$rc)"; fi
 fixtures "$OURS" '[]'
-judge "$(result 9 false 0)" false GH_FAIL=1; verdict "a failed query counts nothing, so fails closed" 1 "No review was posted"
+judge "$(result 9 false 0)" false GH_FAIL=1; verdict "a failed reviews query fails red"     1 "Could not read the reviews"
+judge "$(result 9 false 0)" false GH_PARTIAL=1; verdict "a query that failed on a later page fails red, though a summary loaded" 1 "Could not read the reviews"
 judge "$(result 9 false 0)" false STARTED_AT=; verdict "a missing start time fails closed"   1 "No start time"
 
 echo "the workflow-validation question, per git outcome"
