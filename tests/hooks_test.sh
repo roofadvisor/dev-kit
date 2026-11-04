@@ -285,6 +285,39 @@ check "control flow does not launder cat"  2 guard.sh '{"tool_input":{"command":
 check "blocks any id_rsa mention"          2 guard.sh '{"tool_input":{"command":"ls -la ~/.ssh/id_rsa"}}'
 check "blocks any .pem mention"            2 guard.sh '{"tool_input":{"command":"test -f cert.pem"}}'
 
+# C-11 — an npm install through a linked node_modules. `npm ci` there empties the
+# tree the link points at (GHL-MCP, 2026-10-31: one worktree's install emptied the
+# main checkout's, and every linked worktree lost its packages). The rule judges
+# the filesystem, so these cases build one: `linked` shares `shared`'s install
+# through a link, `own` has a real one. The payload's cwd is where the session is.
+echo "guard.sh C-11 (npm install through a linked node_modules)"
+c11="$tmp/c11"; mkdir -p "$c11/shared/node_modules" "$c11/own/node_modules" "$c11/linked/apps/ui"
+for d in shared own linked; do echo '{}' > "$c11/$d/package.json"; done
+ln -s "$c11/shared/node_modules" "$c11/linked/node_modules"
+c11j() { printf '{"cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2"; }
+check "blocks npm ci through a linked node_modules"   2 guard.sh "$(c11j "$c11/linked" 'npm ci')"
+check "blocks npm install through a link"             2 guard.sh "$(c11j "$c11/linked" 'npm install')"
+check "blocks npm i <pkg> through a link"             2 guard.sh "$(c11j "$c11/linked" 'npm i -D left-pad')"
+check "blocks a cd into a linked tree, then npm ci"   2 guard.sh "$(c11j "$c11" 'cd linked && npm ci')"
+check "blocks --prefix naming a linked tree"          2 guard.sh "$(c11j "$c11" 'npm --prefix linked ci')"
+check "blocks --prefix= after the verb"               2 guard.sh "$(c11j "$c11" 'npm ci --prefix=linked')"
+check "blocks -C with an absolute path"               2 guard.sh "$(c11j "$c11/own" "npm -C $c11/linked ci")"
+check "blocks a cd inside a subshell"                 2 guard.sh "$(c11j "$c11" '(cd linked && npm ci)')"
+check "blocks from a subdirectory (npm walks up)"     2 guard.sh "$(c11j "$c11/linked/apps/ui" 'npm ci')"
+check "blocks behind a VAR=value prefix"              2 guard.sh "$(c11j "$c11/linked" 'CI=1 npm ci')"
+check "the rm must be its own command"                2 guard.sh "$(c11j "$c11/linked" 'rm node_modules && npm ci')"
+check "still judges the line after a heredoc"         2 guard.sh "$(c11j "$c11/linked" 'cat <<EOF\nnotes\nEOF\nnpm ci')"
+check "FAILS LOUD when a cd names a variable"         2 guard.sh "$(c11j "$c11/own" 'cd $W && npm ci')"
+check "FAILS LOUD when --prefix is a substitution"    2 guard.sh "$(c11j "$c11/own" 'npm --prefix $(pwd)/linked ci')"
+check "allows npm ci into a real node_modules"        0 guard.sh "$(c11j "$c11/own" 'npm ci')"
+check "allows a cd out of a linked tree, then npm ci" 0 guard.sh "$(c11j "$c11/linked" 'cd ../own && npm ci')"
+check "allows npm run ci through a link"              0 guard.sh "$(c11j "$c11/linked" 'npm run ci')"
+check "allows npm test through a link"                0 guard.sh "$(c11j "$c11/linked" 'npm test')"
+check "allows --prefix with run through a link"       0 guard.sh "$(c11j "$c11" 'npm --prefix linked run verify')"
+check "allows npm init through a link"                0 guard.sh "$(c11j "$c11/linked" 'npm init -y')"
+check "allows a heredoc body that mentions npm ci"    0 guard.sh "$(c11j "$c11/linked" 'git commit -F - <<EOF\nnpm ci empties a linked tree\nEOF')"
+check "allows a file path that mentions npm"          0 guard.sh "{\"cwd\":\"$c11/linked\",\"tool_input\":{\"file_path\":\"$c11/linked/.npmrc\"}}"
+
 echo "rule-zero.sh"
 check "blocks V2 variant"      2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/reportV2.ts\"}}"
 check "blocks -final variant"  2 rule-zero.sh "{\"tool_input\":{\"file_path\":\"$tmp/report-final.ts\"}}"

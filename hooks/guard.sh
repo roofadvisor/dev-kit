@@ -351,4 +351,121 @@ case "$scrubbed" in
   *"git push --force"*|*"push -f "*|*"push -f")
       deny "C-02" "force-push is human-only." ;;
 esac
+
+# C-11 — an npm install whose node_modules is a link.
+#
+# A worktree often links its node_modules to another checkout's install, so one
+# install serves many trees. An install run through that link reaches the other
+# tree. `npm ci` deletes every entry of node_modules before it installs, and
+# through a link those entries are the other checkout's packages; it then puts a
+# real directory where the link was. On 2026-10-31 one GHL-MCP worktree's
+# `npm --prefix apps/operator-ui ci` emptied the main checkout's install this
+# way, and every worktree linked to it lost its packages. Reproduced on npm
+# 11.21.1: the link's target was left empty. `npm install` was measured too and
+# left the target alone — it replaced the link with a full install of its own.
+# It is denied for that smaller reason: a tree that shared an install gains a
+# second one, and on 2026-11-04 parallel installs took that machine's disk from
+# 17 GB free to under 1 GB. The remedy is the same for both, and deliberate:
+# remove the link in its own command (`rm node_modules` removes the link, never
+# the files it points at), then install.
+#
+# Where an install lands: the session's cwd, moved by any `cd` before it in the
+# command, or by --prefix / -C. With neither, npm walks up to the nearest
+# directory holding a package.json or a node_modules, and so does this. A
+# directory this cannot work out — a variable, a substitution, `cd -` — denies,
+# because a guard that cannot evaluate its input must not pass it (G-03).
+# Heredoc bodies are data and are skipped, so a commit message that mentions
+# `npm ci` is not an install.
+#
+# Known gaps, stated: npm only — pnpm, yarn and bun were not measured. A quoted
+# path with a space in it is split like any other word, resolves to a directory
+# that does not exist, and passes. A `cd` inside a subshell is treated as if it
+# persisted. The `rm` that removes the link must be its own command, because the
+# link is judged as it stands before this command runs.
+c11_dir() { # <base> <word>: the absolute directory a cd or --prefix names, or nothing when it cannot be known
+  local base=$1 p=$2
+  p=${p%)}; p=${p#\"}; p=${p%\"}; p=${p#\'}; p=${p%\'}
+  case "$p" in ''|-|*'$'*|*'`'*|*'*'*|*'?'*|*'('*) return 0 ;; esac
+  case "$p" in '~') p=$HOME ;; '~/'*) p=$HOME/${p#\~/} ;; '~'*) return 0 ;; esac
+  case "$p" in /*) ;; *) [ -n "$base" ] || return 0; p=$base/$p ;; esac
+  printf '%s' "$p"
+}
+c11_segment() { # one command segment: a cd moves $here; an npm install through a link denies
+  set -- $1
+  local w
+  while [ $# -gt 0 ]; do                       # openers, control flow, VAR=value prefixes
+    case "$1" in
+      '('*) w=${1#\(}; shift; [ -n "$w" ] && set -- "$w" "$@" ;;
+      '{'|do|then|else|elif|if|while|until|'!'|time) shift ;;
+      [A-Za-z_]*=*) shift ;;
+      *) break ;;
+    esac
+  done
+  [ $# -eq 0 ] && return 0
+  local verb=${1##*/}; shift
+  case "$verb" in
+    cd) { [ "${1-}" = -P ] || [ "${1-}" = -L ]; } && shift
+        if [ $# -eq 0 ]; then here=$HOME; else here=$(c11_dir "$here" "$1"); fi ;;
+    npm)
+      local sub="" prefix="" kind a t up to
+      while [ $# -gt 0 ]; do
+        a=$1; shift
+        case "$a" in
+          --prefix|-C) prefix=${1-}; [ $# -gt 0 ] && shift ;;
+          --prefix=*)  prefix=${a#--prefix=} ;;
+          -*) ;;
+          *) [ -z "$sub" ] && sub=${a%%[\)\"\']*} ;;
+        esac
+      done
+      case "$sub" in
+        ci|clean-install|ic|install-clean|isntall-clean|cit|install-ci-test|clean-install-test|sit) kind=ci ;;
+        install|i|in|ins|inst|insta|instal|isnt|isnta|isntal|isntall|add|it|install-test) kind=install ;;
+        *) return 0 ;;
+      esac
+      if [ -n "$prefix" ]; then t=$(c11_dir "$here" "$prefix"); else t=$here; fi
+      [ -n "$t" ] || deny "C-11" "cannot tell which directory this npm $sub installs into: a cd or --prefix names a variable or a substitution. Through a linked node_modules an install can wipe another tree's packages, so write the path out." "unresolved"
+      if [ -z "$prefix" ]; then
+        up=$t
+        while [ "$up" != / ] && [ ! -f "$up/package.json" ] && [ ! -e "$up/node_modules" ] && [ ! -L "$up/node_modules" ]; do
+          up=${up%/*}; [ -n "$up" ] || up=/
+        done
+        [ "$up" = / ] || t=$up
+      fi
+      if [ -L "$t/node_modules" ]; then
+        to=$(readlink "$t/node_modules")
+        [ "$kind" = ci ] && deny "C-11" "$t/node_modules is a link to $to. npm ci empties the directory a link points at before it installs, so this would wipe the packages of every tree sharing that install. To give this tree its own install, remove the link in its own command first (rm $t/node_modules removes only the link), then run npm ci." "ci-through-link"
+        deny "C-11" "$t/node_modules is a link to $to, an install other trees share. npm install would put a second full install here in place of the link. If this tree needs its own, remove the link in its own command first (rm $t/node_modules removes only the link), then install; otherwise use the shared install as it is." "install-through-link"
+      fi ;;
+  esac
+}
+if [ -z "$via_path" ]; then
+  case "$cmd" in *npm*)
+    shopt -u nocasematch
+    here=$(hook_top_field "$input" cwd)
+    { [ -n "$here" ] && [ -d "$here" ]; } || here=$PWD
+    seps=${cmd//&&/$'\n'}; seps=${seps//||/$'\n'}
+    seps=${seps//;/$'\n'};      seps=${seps//|/$'\n'}
+    heredoc=""
+    set -f
+    while IFS= read -r seg; do
+      seg=${seg#"${seg%%[![:space:]]*}"}
+      if [ -n "$heredoc" ]; then              # inside a heredoc body: data until its terminator
+        [ "${seg%"${seg##*[![:space:]]}"}" = "$heredoc" ] && heredoc=""
+        continue
+      fi
+      opening=""
+      case "$seg" in *'<<'*)
+        rest=${seg#*<<}
+        case "$rest" in '<'*) ;; *)           # <<< is a here-string, not a heredoc
+          rest=${rest#-}; rest=${rest#"${rest%%[![:space:]]*}"}
+          opening=${rest%%[[:space:]]*}
+          opening=${opening#\'}; opening=${opening%\'}; opening=${opening#\"}; opening=${opening%\"} ;;
+        esac ;;
+      esac
+      [ -n "$seg" ] && c11_segment "$seg"
+      heredoc=$opening
+    done <<< "$seps"
+    set +f ;;
+  esac
+fi
 exit 0

@@ -42,6 +42,7 @@ promote-when trigger. `JUDGMENT` is a finished state.
 | C-08 | Never delete a test to make a build pass | TEST | **GATE** (`check_test_count`) | done |
 | C-09 | No destructive filesystem commands from an agent session | HOOK | **HOOK** | done |
 | C-10 | Instruction files stay in sync with the rule modules | GATE | **GATE** (`check_instruction_honesty`) | done |
+| C-11 | No npm install through a linked `node_modules` — `npm ci` empties the tree the link points at | HOOK | **HOOK** | done |
 | C-15 | A partial output is a broken output — no placeholders, deliver all N | LINT | **PROSE** | open |
 
 ## Guards
