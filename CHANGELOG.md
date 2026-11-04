@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.4.0 — the guard refuses an npm install through a linked node_modules (C-11)
+
+Worktrees link `node_modules` to another checkout's install so one install serves many
+trees. On 2026-10-31 a GHL-MCP worktree ran `npm --prefix apps/operator-ui ci` through such
+a link. `npm ci` deletes every entry of `node_modules` before it installs, and through the
+link those entries were the main checkout's packages. It emptied that install, and every
+worktree linked to it lost its packages until 2026-11-04. Reproduced on npm 11.21.1: the
+link's target is left empty, and the worktree gets a real directory in place of the link.
+
+- **`npm ci` and its aliases deny** when the `node_modules` they would install into is a
+  link. The message names the link's target and the remedy: remove the link in its own
+  command (`rm node_modules` removes only the link), then install.
+- **`npm install`, `npm i <pkg>` and their aliases deny too, for a smaller reason.** Measured,
+  it left the target alone and replaced the link with a full install of its own. That is a
+  second install in a tree that was sharing one, and on 2026-11-04 parallel installs took
+  the machine's disk from 17 GB free to under 1 GB.
+- **Where an install lands** is worked out as npm does: the session's `cwd`, moved by a `cd`
+  earlier in the command or by `--prefix` / `-C`, then up to the nearest directory with a
+  `package.json` or `node_modules`. A `cd` or `--prefix` that names a variable or a
+  substitution denies, because the guard cannot evaluate it (G-03). Heredoc bodies are data,
+  so a commit message that mentions `npm ci` does not deny.
+- **Not covered, stated:** pnpm, yarn and bun (not measured), a quoted path containing a
+  space (it resolves nowhere and passes), and a `cd` inside a subshell (treated as if it
+  persisted). The `rm` of the link must be its own command, because the link is judged as
+  it stands before the command runs.
+
+`tests/hooks_test.sh`: 22 new cases (324 → 346) — 14 that must deny (2 of them fail-loud),
+8 that must pass. Each branch (the link check, the fail-loud deny, heredoc skipping, the
+walk-up) was broken in a copy and seen red on its own cases. C-11 is a new row in
+`templates/rules/REGISTRY.md`. The rule binds only in repos that
+opted in (`.claude/.framework-state.json`), like every dev-kit hook.
+
+**Update:** `claude plugin marketplace update roofadvisor`, then
+`claude plugin update dev-kit@roofadvisor`, then restart Claude Code.
+
 ## 2.3.0 — the review template runs on either credential, says "out of tokens", and proves it posted
 
 `templates/github/claude-code-review.yml` takes in what roofadvisor/roof-club#429 learned
