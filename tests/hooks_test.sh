@@ -1027,14 +1027,23 @@ vrp "an escaped ; is not a separator" 0 "$(bash_json 'echo \; npm run verify')"
 vrp "control: backgroundTaskId alone means the run has not finished" 0 "$(resp_json 'npm run verify' '{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"b2"}')"
 vrp "control: backgroundedToDeliverMessage alone means the same" 0 "$(resp_json 'npm run verify' '{"stdout":"","stderr":"","interrupted":false,"backgroundedToDeliverMessage":true}')"
 
-echo "format.sh"
-# Self-contained fixture rather than relying on the ambient cwd: format.sh now
-# gates on hook_opted_in too (A18), so it needs its own opted-in repo the same
-# as every other hook, not whatever directory happened to invoke this suite.
-fm=$(mktemp -d); ( cd "$fm" && git init -q ); mkstate "$fm"
-if (cd "$fm" && echo '{"tool_input":{"file_path":"/nonexistent/x.py"}}' | CLAUDE_FILE_PATHS="/nonexistent/x.py" bash "$HOOKS/format.sh") >/dev/null 2>&1; then
-  echo "  PASS  never blocks, even on a missing file"; pass=$((pass+1))
-else echo "  FAIL  format.sh must never block"; fail=$((fail+1)); fi
+echo "hook input comes from the payload, not an environment variable the CLI never sets"
+# format.sh read the files to format from CLAUDE_FILE_PATHS, and Claude Code never
+# set it: 0 occurrences in the CLI binary on 2.1.247 and 2.1.252, against 24-25
+# for CLAUDE_PROJECT_DIR. So from 2.0.0 to 2.4.0 the formatter ran on nothing, and
+# its one case here passed only because the case exported the variable itself.
+# A hook reads its input from the stdin payload (hooks/_parse.sh). CLI_ENV is the
+# CLAUDE_* variables the CLI does set for a hook, measured the same way. It is a
+# kept list, and it grows only with a measurement.
+CLI_ENV="CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT"
+hook_files=$(ls "$HOOKS"/*.sh 2>/dev/null | wc -l | tr -d ' ')
+unknown=""
+for v in $(grep -o -h -E 'CLAUDE_[A-Z_]+' "$HOOKS"/*.sh 2>/dev/null | sort -u); do
+  case " $CLI_ENV " in *" $v "*) ;; *) unknown="$unknown $v" ;; esac
+done
+if [ "$hook_files" -lt 5 ]; then echo "  FAIL  found $hook_files hook scripts; the scan is not reading hooks/"; fail=$((fail+1))
+elif [ -z "$unknown" ]; then echo "  PASS  every CLAUDE_* variable a hook reads is one the CLI sets ($hook_files scripts)"; pass=$((pass+1))
+else echo "  FAIL  hooks read CLAUDE_* variables the CLI does not set:$unknown"; fail=$((fail+1)); fi
 
 echo "guard-local.sh (A11 fallback — must work with the plugin GONE)"
 GL="$(cd "$HOOKS/.." && pwd)/templates/scaffold/guard-local.sh"
@@ -1193,10 +1202,6 @@ else echo "  FAIL  session-context.sh emitted output on a non-opted-in repo: $sc
 if [ ! -f "$ni/.claude/.session-log" ]; then echo "  PASS  session-context.sh writes no telemetry for a non-opted-in repo"; pass=$((pass+1))
 else echo "  FAIL  session-context.sh wrote telemetry for a non-opted-in repo"; fail=$((fail+1)); fi
 
-( cd "$ni" && bash "$HOOKS/format.sh" >/dev/null 2>&1 ); got=$?
-if [ "$got" -eq 0 ]; then echo "  PASS  format.sh silent on a non-opted-in repo"; pass=$((pass+1))
-else echo "  FAIL  format.sh on a non-opted-in repo (got $got)"; fail=$((fail+1)); fi
-
 # done-check.sh: the exact fixture shape that blocks when opted in (see
 # "done-check.sh" section above) must NOT block here — same rule, opt-in is
 # the only variable.
@@ -1232,7 +1237,7 @@ if [ "$(cat "$KIT_LOG_PATH" 2>/dev/null | cksum)" = "$KIT_LOG_BEFORE" ]; then
   echo "  PASS  kit's own enforcement log unchanged by the test run"; pass=$((pass+1))
 else echo "  FAIL  tests modified the kit's real enforcement log"; fail=$((fail+1)); fi
 
-rm -rf "$tmp" "$dc" "$dc2" "$vr" "$vr2" "$et" "$et2" "$et3" "$et4" "$et5" "$fm" "$ni" "$ni2" "$nogit" "$mal" "$gate" "$dt" "$pkg" "$tok" "$gatedoc"
+rm -rf "$tmp" "$dc" "$dc2" "$vr" "$vr2" "$et" "$et2" "$et3" "$et4" "$et5" "$ni" "$ni2" "$nogit" "$mal" "$gate" "$dt" "$pkg" "$tok" "$gatedoc"
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1

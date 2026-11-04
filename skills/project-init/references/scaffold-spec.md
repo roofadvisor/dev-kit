@@ -85,11 +85,11 @@ elsewhere. **Wires only `guard-local.sh`:**
 ```
 
 **Never add entries here for `guard.sh`, `rule-zero.sh`, `done-check.sh`,
-`format.sh`, `verify-record.sh`, or `session-context.sh` — not even with an
+`verify-record.sh`, or `session-context.sh` — not even with an
 absolute or `${CLAUDE_PLUGIN_ROOT}`-based path.** A18: `${CLAUDE_PLUGIN_ROOT}`
 resolves only inside a *plugin's own* `hooks/hooks.json`, never inside a
 project's `.claude/settings.json` — a command built from it there is silently
-skipped, not run with an empty value (measured on CLI 2.1.220). Those six hooks
+skipped, not run with an empty value (measured on CLI 2.1.220). Those five hooks
 are declared exactly once, globally, in the plugin's `hooks/hooks.json`, and
 each gates itself on this project's `.claude/.framework-state.json` (step 7)
 before doing anything else. Adding a redundant project-level entry for one of
