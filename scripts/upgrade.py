@@ -29,7 +29,7 @@ STATE = ".claude/.framework-state.json"
 # A18 — this file now does double duty. It has always been the file-sync
 # baseline below; since hooks/hooks.json shipped, its mere PRESENCE is also
 # what hook_opted_in() (hooks/_parse.sh) checks to decide whether this repo's
-# plugin-declared hooks (guard.sh, rule-zero.sh, done-check.sh, format.sh,
+# plugin-declared hooks (guard.sh, rule-zero.sh, done-check.sh,
 # verify-record.sh, session-context.sh) do anything at all.
 #
 # No migration or backfill was needed for that: every repo /project-init has

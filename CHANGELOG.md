@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.4.1 — format.sh is gone: it never ran
+
+`hooks/format.sh` read the files to format from `CLAUDE_FILE_PATHS`, and Claude Code never
+sets that variable: it appears 0 times in the CLI binary on 2.1.247 and 2.1.252, while
+`CLAUDE_PROJECT_DIR` appears 24–25 times. So from 2.0.0 to 2.4.0 the PostToolUse formatter
+exited on its first line in every repo. Its one harness case passed only because the case
+exported the variable itself. Found while opting roof-club and AR-AP in (2026-11-04).
+
+**Deleted rather than fixed.** Fixed to read `tool_input.file_path` from the payload, it would
+run `uv run ruff format` and `pnpm exec prettier --write` after every edit. All three repos
+using the kit chose not to auto-format. GHL-MCP and roof-club run `biome lint` and set Biome's
+`formatter` to `"enabled": false` in `biome.json`. AR-AP's owner ruled that ruff carries
+bug-finding rules only, with style left out on purpose (2026-11-03). A global format-on-edit
+would override all three, and nothing depended on it, since it had never run.
+
+- Removed `hooks/format.sh`, its `hooks/hooks.json` entry, and this repo's own
+  `.claude/settings.json` entry for it.
+- Removed it from `INSTRUCTIONS.md`, `skills/project-init/SKILL.md`,
+  `skills/project-init/references/scaffold-spec.md` ("five hooks", no longer six) and the
+  `scripts/upgrade.py` comment. `docs/BACKLOG.md` and older entries here keep the history.
+- `tests/hooks_test.sh`: the two `format.sh` cases are gone (the false green, and a
+  non-opted-in silence case). In their place is one guard: every `CLAUDE_*` variable a hook
+  reads must be one the CLI sets (`CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_ROOT` — a kept list,
+  measured as above). Seen red against `origin/main`'s hooks, naming `CLAUDE_FILE_PATHS`, and
+  fail-loud on an empty folder. Hooks harness 346 → 345. `tests/conformance_test.sh` 49 → 47,
+  because it checks each hook script and each `hooks.json` command, and there is one fewer of
+  each.
+
+**Downstream:** the opt-in markers in GHL-MCP, roof-club and AR-AP list `format.sh` among the
+hooks they turn on. That list is informational, since nothing parses the marker, but it should
+drop the line.
+
+**Update:** `claude plugin marketplace update roofadvisor`, then
+`claude plugin update dev-kit@roofadvisor`.
+
 ## 2.4.0 — the guard refuses an npm install through a linked node_modules (C-11)
 
 Worktrees link `node_modules` to another checkout's install so one install serves many
