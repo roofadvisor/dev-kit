@@ -33,6 +33,8 @@ if (!file) { console.log('usage: node scripts/axe_audit.mjs <file.html> [--dark]
 const browser = await chromium.launch({ channel: 'chrome' }).catch(() => chromium.launch());
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page.goto('file://' + resolve(file), { waitUntil: 'networkidle' }).catch(() => {});
+// Before the theme flip: a colour read mid-fade is the old background under the new text.
+await page.addStyleTag({ content: '*{transition:none!important;animation:none!important}' });
 if (dark) await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
 
 const localAxe = resolve('node_modules/axe-core/axe.min.js');
