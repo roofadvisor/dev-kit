@@ -129,6 +129,8 @@ for (const f of files) {
   const name = f.split('/').pop();
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, colorScheme: dark ? 'dark' : 'light' });
   await page.goto('file://' + f);
+  // Before the theme flip: a colour read mid-fade is the old background under the new text.
+  await page.addStyleTag({ content: '*{transition:none!important;animation:none!important}' });
   if (dark) await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   const { theme, controls } = await page.evaluate(COLLECT);
   await page.close();

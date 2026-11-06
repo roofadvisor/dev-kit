@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.4.2 — the axe gate no longer measures a colour that is still fading
+
+`kit/scripts/axe_audit.mjs --dark` set `data-theme="dark"` and ran axe at once. A component
+with a colour transition (`transition: background 120ms`) then showed its new text colour on
+its old background until the fade ended, and axe reported a contrast failure. Whether it did
+depended on how long the axe-core script took to load, so the gate failed at random: about
+1 run in 12 on roof-club's operator harness, with no code change, from 2026-11-02 to
+2026-11-06 (`a[aria-current] > .trail > .meta`, `a[aria-current="page"] > .n`).
+`measure_render.mjs` and `verify_states.mjs` already switched transitions off before the
+flip; this gate did not.
+
+- `axe_audit.mjs`, `lint_intent.mjs` and `verify_interactive.mjs` now inject
+  `*{transition:none!important;animation:none!important}` before the theme flip, as the other
+  colour gates do. `lint_intent` read a computed background the same way.
+  `verify_interactive` took its "before" fingerprint mid-fade, so in dark a fade could read as
+  the click having changed the control (a false pass).
+- New harness `tests/render_gates_test.sh`, added to `scripts/verify.sh` and both workflows.
+  The static rule is derived from the scripts: every gate that flips `data-theme` at run time
+  and reads a colour must switch transitions off first. Seen red against 2.4.1, naming all
+  three scripts. The rendered case (a 30-second background fade) fails on the unguarded
+  script and passes on the guarded one. It runs when a browser and axe-core load, and prints
+  a NOTE when they do not: this repo's CI installs no browser.
+- Proven on roof-club's operator harness: with transitions stretched the old gate failed
+  every run; with the guard it passed 15 of 15.
+
+**Consumers:** only a repo that runs the kit's render gates needs the new pin. Today that is
+roof-club (`@roofadvisor/dev-kit` as a devDependency, `design/systems/verify.sh`).
+
 ## 2.4.1 — format.sh is gone: it never ran
 
 `hooks/format.sh` read the files to format from `CLAUDE_FILE_PATHS`, and Claude Code never

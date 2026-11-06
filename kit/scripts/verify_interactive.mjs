@@ -147,6 +147,8 @@ for (const f of files) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   if (dark) await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('file://' + f);
+  // Before the theme flip: a colour read mid-fade is the old background under the new text.
+  await page.addStyleTag({ content: '*{transition:none!important;animation:none!important}' });
   if (dark) await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   const candidates = await page.evaluate(COLLECT, { attrs: STATE_ATTRS, roles: STATE_ROLES });
   await page.close();
@@ -158,6 +160,8 @@ for (const f of files) {
     const p = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     if (dark) await p.emulateMedia({ colorScheme: 'dark' });
     await p.goto('file://' + f);
+    // Before the theme flip: a colour read mid-fade is the old background under the new text.
+    await p.addStyleTag({ content: '*{transition:none!important;animation:none!important}' });
     if (dark) await p.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
     await p.evaluate(WATCH);
     const declaredAttrs = c.declares.filter(d => !d.startsWith('role='));
