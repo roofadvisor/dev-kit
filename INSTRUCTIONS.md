@@ -131,7 +131,7 @@ every repo this kit has actually touched. Harness-only: no model context cost.
 
 | Event | Script | What it does |
 |---|---|---|
-| SessionStart | `session-context.sh` | Writes `.claude/.session-log` — the evidence `session_report.py`, `/retro`, and `/promote-rule` run on — and prints the `.claude/rules/` index and the enforcement note, for the session's own worktree. It does not print CLAUDE.md (2.5.0): Claude Code loads it |
+| SessionStart | `session-context.sh` | Writes `.claude/.session-log` — the evidence `session_report.py`, `/retro`, and `/promote-rule` run on — and prints the `.claude/rules/` index and the enforcement note, for the session's own worktree. It does not print CLAUDE.md (2.5.0): Claude Code loads it. From a linked worktree the log row goes to the main checkout, which outlives it (2.5.1) |
 | PreToolUse (Bash\|Read\|Edit\|Write) | `guard.sh` | Hard-blocks dangerous commands (secrets, force-push, …) — exit 2, stderr returned to Claude |
 | PreToolUse (Write) | `rule-zero.sh` | Blocks a new near-duplicate file when a canonical home already exists for that category; a plan beside its spec and a source beside its own test are pairs, not duplicates |
 | PostToolUse (Bash) | `verify-record.sh` | Records a verify run that passed: the CLI reported a clean finish and the command's exit status is the verify's own, in the session's own worktree. Counts the built-in entrypoints and the commands `.claude/verify.json` declares (`full`, `fast`), and records which ran |

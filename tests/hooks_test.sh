@@ -1283,6 +1283,16 @@ vmw=$(mktemp -d)
 ( cd "$vmw" && git add .claude && git commit -qm opt-in && git worktree add -q "$vmw-wt" -b wt )
 mark "$vmw-wt" -- true
 ok "a run in a worktree marks the worktree, not the main checkout" "yes no" "$(has_marker "$vmw-wt") $(has_marker "$vmw")"
+ok "its telemetry line lands in the main checkout, which outlives the worktree (2.5.1)" "yes no" \
+  "$(grep -q 'verify	full: true' "$vmw/.claude/.session-log" 2>/dev/null && echo yes || echo no) $([ -s "$vmw-wt/.claude/.session-log" ] && echo yes || echo no)"
+# 2.5.1: the command learns it runs under the wrapper, so a no-op mode of it can refuse.
+mark "$vmw-wt" --as fast -- sh -c 'test "$DEV_KIT_VERIFY_MARK" = fast'; got=$?
+ok "the wrapped command sees DEV_KIT_VERIFY_MARK set to its label" 0 "$got"
+( cd "$vmw-wt" && CI=true bash "$MARK" -- sh -c 'test -z "${DEV_KIT_VERIFY_MARK-}"' ) >/dev/null 2>&1; got=$?
+ok "under CI, where no marker is written, it is not set" 0 "$got"
+bash_json 'npm run verify' | (cd "$vmw-wt" && DEV_KIT_WRAPPER_FRESH_SECONDS=-1 bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
+ok "verify-record logs a worktree's run in the main checkout too" yes \
+  "$(grep -q 'verify	full: npm run verify' "$vmw/.claude/.session-log" 2>/dev/null && echo yes || echo no)"
 rm -rf "$vm" "$vmc" "$vmn" "$vmw" "$vmw-wt"
 
 echo "declared fast verify (ruling 2: verify:changed counts when CI gates the change fully)"
@@ -1331,6 +1341,24 @@ touch "$df/.claude/.last-verify"
 dcp "a pre-2.5.0 (empty) marker still works: fresh passes" 0 "$df" "$(stop_json "$df")"
 rm -rf "$df"
 
+echo "verify-record.sh leaves a wrapped run's own marker (2.5.1)"
+# A wrapped verify through the Bash tool marks itself, dated from its start; then
+# verify-record fires. Rewritten there, the marker was dated from the end, and an edit
+# made during the run (a background subagent) passed done-check.
+wr=$(mktemp -d); mkrepo "$wr"; decl "$wr" "$GHL_DECL"
+mark "$wr" --as fast -- sh -c 'sleep 1; echo z >> a.ts; sleep 1'
+bash_json 'npm run verify:changed' | (cd "$wr" && bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
+ok "the wrapper's marker survives the hook" "writer=dev-kit-verify-mark" "$(grep '^writer=' "$wr/.claude/.last-verify")"
+dcp "so an edit made during the wrapped run still blocks" 2 "$wr" "$(stop_json "$wr")"
+ok "and the run is logged once, by the wrapper" 1 "$(grep -c 'verify	' "$wr/.claude/.session-log" | tr -d ' ')"
+# Control: a wrapper marker older than the window is an earlier run's; the hook's
+# own pass replaces it.
+sleep 1
+bash_json 'npm run verify:changed' | (cd "$wr" && DEV_KIT_WRAPPER_FRESH_SECONDS=0 bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
+ok "control: an earlier run's wrapper marker is replaced by the hook's" "writer=verify-record" "$(grep '^writer=' "$wr/.claude/.last-verify")"
+dcp "control: and the hook's later pass clears done-check" 0 "$wr" "$(stop_json "$wr")"
+rm -rf "$wr"
+
 echo "session-context.sh (ruling 3: no CLAUDE.md copy, the session's own tree)"
 # Claude Code loads CLAUDE.md itself; printing it again cost every session a second
 # copy, and in a worktree session the copy was the main checkout's, possibly stale.
@@ -1348,7 +1376,14 @@ ok "it keeps the ENFORCEMENT note" yes "$(printf '%s' "$out" | grep -q -- '--- E
 out=$(printf '{"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$scw-wt" | (cd "$scw" && bash "$HOOKS/session-context.sh") 2>&1)
 ok "a worktree session indexes the worktree's rules" yes "$(printf '%s' "$out" | grep -q 'wt-rule.md' && echo yes || echo no)"
 ok "a worktree session prints neither CLAUDE.md" no "$(printf '%s' "$out" | grep -q 'SENTINEL-' && echo yes || echo no)"
-ok "a worktree session's telemetry lands in the worktree" yes "$([ -s "$scw-wt/.claude/.session-log" ] && echo yes || echo no)"
+ok "a worktree session's telemetry lands in the main checkout, not the worktree (2.5.1)" "yes no" \
+  "$([ -s "$scw/.claude/.session-log" ] && echo yes || echo no) $([ -s "$scw-wt/.claude/.session-log" ] && echo yes || echo no)"
+# A main checkout with no .claude/ folder never opted in there: no folder is made for
+# it, and the worktree keeps its own log.
+rm -rf "$scw/.claude"
+printf '{"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$scw-wt" | (cd "$scw" && bash "$HOOKS/session-context.sh") >/dev/null 2>&1
+ok "with no .claude/ in the main checkout, the worktree keeps the log" "no yes" \
+  "$([ -d "$scw/.claude" ] && echo yes || echo no) $([ -s "$scw-wt/.claude/.session-log" ] && echo yes || echo no)"
 rm -rf "$scw" "$scw-wt"
 
 # 7. The harness must leave the kit's own enforcement log EXACTLY as it found

@@ -65,7 +65,9 @@ EOF
 # "Observe for a week" is not something an agent can do — every session starts
 # blank. So the observation is written down instead of remembered.
 # /project-audit reads this log and reports on real counts, not recollection.
-log="$root/.claude/.session-log"
+# In the MAIN checkout, not a linked worktree, which is deleted after merge and would
+# take the telemetry with it (2.5.1, hook_log_root).
+log="$(hook_log_root || echo "$root")/.claude/.session-log"
 mkdir -p "$(dirname "$log")" 2>/dev/null
 {
   printf '%s\t' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -24,6 +24,11 @@
 #  - --as names which verify ran (full, or the project's declared fast check;
 #    .claude/verify.json). The marker records it with the command, and done-check
 #    names it when it blocks.
+#  - The command runs with DEV_KIT_VERIFY_MARK set to the label (only when a marker
+#    will be written), so a mode of it that exits 0 having checked nothing can refuse
+#    (2.5.1). GHL-MCP's verify-changed.mjs refuses --plan this way.
+#  - Its session-log line goes to the main checkout when this is a linked worktree, as
+#    the hooks' do (2.5.1): a worktree is deleted after merge, its log with it.
 #
 # Self-contained on purpose, so a project can vendor it as one file or call it from
 # node_modules/@roofadvisor/dev-kit/scripts/ when it pins the kit. Needs git, bash and
@@ -65,6 +70,10 @@ trap '[ -n "$stamp" ] && rm -f "$stamp"' EXIT
 trap 'echo "$me: interrupted; no marker written." >&2; exit 130' INT
 trap 'echo "$me: terminated; no marker written." >&2; exit 143' TERM
 
+# Tells the command it runs under this script, so a mode of it that exits 0 without
+# checking anything (GHL-MCP's `verify-changed.mjs --plan`) can refuse instead of
+# leaving a passing marker (2.5.1). Set only when a marker will be written.
+[ -n "$root" ] && export DEV_KIT_VERIFY_MARK="$label"
 "$@"
 status=$?
 
@@ -91,7 +100,15 @@ tmp="$marker.tmp.$$"
   echo "$me: the verify passed, but the marker could not be written to $marker." >&2
   exit 70
 }
+# Telemetry goes to the MAIN checkout when this is a linked worktree with one that has
+# a .claude/ folder: a worktree is deleted after merge, and its log with it (2.5.1; the
+# same rule as hooks/_parse.sh hook_log_root). The marker stays with the tree verified.
+logroot=$root
+common=$(git rev-parse --git-common-dir 2>/dev/null) && common=$(cd "$common" 2>/dev/null && pwd -P) || common=""
+if [ -n "$common" ] && [ "${common##*/}" = ".git" ] && [ -d "${common%/.git}/.claude" ]; then
+  logroot=${common%/.git}
+fi
 printf '%s\tverify\t%s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$label" "$(printf '%s' "${cmdline% }" | cut -c1-60)" \
-  >> "$root/.claude/.session-log" 2>/dev/null
+  >> "$logroot/.claude/.session-log" 2>/dev/null
 echo "$me: verify passed ($label); marker written, dated from the run's start ($started)." >&2
 exit 0

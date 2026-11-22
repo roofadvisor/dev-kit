@@ -1234,8 +1234,9 @@ Owner rulings of 2026-11-22, from GHL-MCP's dev-loop speed and token-spend audit
 
 Leaves alone: a declared command that names neither `verify` nor `test` is not seen by
 verify-record's first filter; wrapping it is the way in. A Bash-tool run of a wrapped verify
-is marked twice, and verify-record's write (dated from the end) wins. That is harmless, since
-no edit of Claude's lands inside a foreground Bash call. The marker is still a plain file that
+was marked twice in 2.5.0, and verify-record's write (dated from the end) won. That was called
+harmless, since no edit of Claude's lands inside a foreground Bash call, but a background
+subagent's or another session's does: 2.5.1 leaves a marker the wrapper wrote in the last 60 s. The marker is still a plain file that
 anyone can touch: the guard is against an honest miss, not a forger.
 
 ## 3 — Registry debt (PROSE that should be mechanized)
