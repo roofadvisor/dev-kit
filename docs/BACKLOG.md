@@ -139,7 +139,7 @@ scaffolds' annotations.
 
 ---
 
-### A15 — session-context.sh: retire or re-justify · ✅ decided in 1.17.2 — re-scoped, kept
+### A15 — session-context.sh: retire or re-justify · ✅ decided in 1.17.2 — re-scoped, kept (CLAUDE.md copy dropped in 2.5.0, A31)
 
 **Evidence:** scratch repo, sentinel rule in `.claude/rules/`, no hook, no
 `settings.json`; headless `claude -p` on **2.1.220** returned the sentinel
@@ -1214,6 +1214,29 @@ Leaves alone: a nested repository is still one `dir/` line, because git does not
 into it. It counts as a change but has no mtime to compare. Listing every untracked file
 costs one `stat` fork per file in the staleness loop. That is the same per-file cost as a
 tracked change, and it only grows when a large untracked folder is not gitignored.
+
+### A31 — a verify the Bash tool cannot finish never counted; session-context printed a second CLAUDE.md · ✅ built in 2.5.0
+
+Owner rulings of 2026-11-22, from GHL-MCP's dev-loop speed and token-spend audit
+(`docs/superpowers/plans/2026-11-22-dev-loop-speed-and-token-spend.md` there, items 3 and 7).
+
+- **A verify run anywhere counts.** Only `verify-record.sh` wrote `.claude/.last-verify`, and
+  only for a foreground Bash-tool run, which stops at 10 minutes. GHL-MCP's verify took
+  1,241 s, so done-check there could not be met honestly. Built:
+  `scripts/dev-kit-verify-mark.sh -- <verify>` writes the marker itself on exit 0, dated from
+  the run's start, and removes it on a failed run.
+- **A declared fast verify counts.** `.claude/verify.json` declares `full` and `fast`
+  (GHL-MCP: `npm run verify:changed`, roofadvisor/GHL-MCP#2349). verify-record counts them
+  under the same masking rules; done-check's block names them and which one the marker
+  records. This closes A28's deviation "no repo declares one machine-readably".
+- **No second CLAUDE.md.** `session-context.sh` stopped printing it (A15 already called it
+  redundant) and reads the session's own worktree from the payload's `cwd`.
+
+Leaves alone: a declared command that names neither `verify` nor `test` is not seen by
+verify-record's first filter; wrapping it is the way in. A Bash-tool run of a wrapped verify
+is marked twice, and verify-record's write (dated from the end) wins. That is harmless, since
+no edit of Claude's lands inside a foreground Bash call. The marker is still a plain file that
+anyone can touch: the guard is against an honest miss, not a forger.
 
 ## 3 — Registry debt (PROSE that should be mechanized)
 

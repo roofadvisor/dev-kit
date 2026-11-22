@@ -4,18 +4,26 @@
 #   PRIMARY JOB: session telemetry. This hook writes .claude/.session-log —
 #   the evidence session_report.py, /retro, and /promote-rule run on. Retiring
 #   it retires the evidence.
-#   SECONDARY: the rules-index injection is redundant defense-in-depth.
-#   Empirically proven redundant on Claude Code 2.1.220 (sentinel rule in
-#   .claude/rules/ loaded headlessly with NO hook and no settings.json) —
-#   kept only for older CLIs and --setting-sources exclusions.
+#   SECONDARY: a one-line-per-file index of .claude/rules/ and the ENFORCEMENT
+#   note. The rules auto-load (proven on Claude Code 2.1.220: a sentinel rule in
+#   .claude/rules/ loaded headlessly with NO hook and no settings.json); the
+#   index is kept for older CLIs and --setting-sources exclusions.
+#
+# 2.5.0 (owner ruling 2026-11-22): it no longer prints CLAUDE.md. Claude Code
+# loads CLAUDE.md itself, from the cwd and every folder above it, so the copy
+# printed here was the same file a second time, in every session's context. And
+# it was sometimes the wrong file: the hook process starts where the session
+# launched, so in a worktree session it printed the main checkout's CLAUDE.md,
+# which can be days behind the worktree's own. Everything below now reads the
+# session's own tree (the payload's cwd, hook_enter_session_dir), as done-check
+# and verify-record already do.
 #
 # AGENTS.md-style guides still never auto-load; the documented fix there is an
 # @AGENTS.md import in CLAUDE.md, not this hook.
-#
-# This hook walks up to the repo root and injects the rules index into every
-# session regardless of where it started.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/_parse.sh"
+input=$(hook_read_input)
+hook_enter_session_dir "$input"
 hook_opted_in || exit 0
 
 # `git rev-parse --show-toplevel` returns the PHYSICAL path, with symlinks resolved.
@@ -33,10 +41,7 @@ echo "=== PROJECT RULES (injected — cwd is $cwd) ==="
 
 if [ "$cwd" != "$root" ]; then
   echo "NOTE: this session did not start at the repo root ($root)."
-  echo "Repo-root instruction files do NOT auto-load here. They are injected below."
 fi
-
-[ -f "$root/CLAUDE.md" ] && { echo "--- CLAUDE.md ---"; cat "$root/CLAUDE.md"; }
 
 if [ -d "$root/.claude/rules" ]; then
   echo "--- .claude/rules/ (read the relevant file before working in that area) ---"

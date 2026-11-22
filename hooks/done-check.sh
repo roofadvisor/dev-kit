@@ -92,14 +92,28 @@ counts="A verify counts only when it runs on its own and finishes: piped without
 command -v python3 >/dev/null 2>&1 \
   || counts="$counts This host has no python3, which verify-record.sh needs to recognise a verify run, so no run can clear this."
 
+# Which commands count (2.5.0). The project may declare its full verify and a fast
+# one it accepts in place of it, because CI gates the change fully
+# (.claude/verify.json; hook_verify_decl in _parse.sh). Named in every block, so the
+# retry runs the right thing.
+decl_note=""
+decl_full=$(hook_verify_decl "$root" full) || decl_note=" (.claude/verify.json could not be read, so no declared command counts)"
+decl_fast=$(hook_verify_decl "$root" fast) || decl_fast=""
+fast_note=$(hook_verify_decl "$root" fast_note) || fast_note=""
+run_what="Run the project verify command${decl_full:+ (\`$decl_full\`)}"
+[ -n "$decl_fast" ] && run_what="$run_what, or its declared fast check \`$decl_fast\`${fast_note:+ ($fast_note)}"
+run_what="$run_what$decl_note."
+outside="A run outside this session's Bash tool (a terminal tab, a background task) counts when the verify is wrapped in dev-kit-verify-mark.sh, which writes the marker itself when the run exits 0."
+
 marker="$root/.claude/.last-verify"
 if [ ! -f "$marker" ]; then
   {
     echo "No verify run recorded this session, but source files changed:"
     printf '%s\n' "$changed" | head -5 | sed 's/^/  /'
-    echo "Run the project verify command before reporting completion."
+    echo "$run_what"
     echo "A 'done' claim not backed by a passing run is a guess about the diff."
     echo "$counts"
+    echo "$outside"
   } >&2
   exit 2
 fi
@@ -136,8 +150,22 @@ while IFS= read -r f; do
 done <<< "$changed"
 
 if [ "$newest" -gt "$mtime" ]; then
-  echo "Source changed after the last verify run. Re-run verify before claiming done." >&2
-  echo "$counts" >&2
+  # Which verify the marker records, so the block says what was run and when. A
+  # marker written before 2.5.0 is empty and says nothing.
+  m_label=$(hook_marker_field "$marker" label)
+  m_cmd=$(hook_marker_field "$marker" command)
+  m_when=$(hook_marker_field "$marker" started)
+  [ -n "$m_when" ] && m_when="started $m_when" || { m_when=$(hook_marker_field "$marker" finished); m_when=${m_when:+finished $m_when}; }
+  last="the last verify run"
+  if [ -n "$m_label" ]; then
+    last="the last verify run ($m_label${m_cmd:+: \`$m_cmd\`}${m_when:+, $m_when})"
+  fi
+  {
+    echo "Source changed after $last. Re-run verify before claiming done."
+    echo "$run_what"
+    echo "$counts"
+    echo "$outside"
+  } >&2
   exit 2
 fi
 exit 0

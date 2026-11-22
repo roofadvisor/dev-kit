@@ -131,11 +131,17 @@ every repo this kit has actually touched. Harness-only: no model context cost.
 
 | Event | Script | What it does |
 |---|---|---|
-| SessionStart | `session-context.sh` | Writes `.claude/.session-log` — the evidence `session_report.py`, `/retro`, and `/promote-rule` run on |
+| SessionStart | `session-context.sh` | Writes `.claude/.session-log` — the evidence `session_report.py`, `/retro`, and `/promote-rule` run on — and prints the `.claude/rules/` index and the enforcement note, for the session's own worktree. It does not print CLAUDE.md (2.5.0): Claude Code loads it |
 | PreToolUse (Bash\|Read\|Edit\|Write) | `guard.sh` | Hard-blocks dangerous commands (secrets, force-push, …) — exit 2, stderr returned to Claude |
 | PreToolUse (Write) | `rule-zero.sh` | Blocks a new near-duplicate file when a canonical home already exists for that category; a plan beside its spec and a source beside its own test are pairs, not duplicates |
-| PostToolUse (Bash) | `verify-record.sh` | Records a verify run that passed: the CLI reported a clean finish and the command's exit status is the verify's own, in the session's own worktree |
-| Stop | `done-check.sh` | Refuses a silent "done" when source changed after the last passing verify: once per stop (the retry passes), never mid-merge, judging the session's own worktree |
+| PostToolUse (Bash) | `verify-record.sh` | Records a verify run that passed: the CLI reported a clean finish and the command's exit status is the verify's own, in the session's own worktree. Counts the built-in entrypoints and the commands `.claude/verify.json` declares (`full`, `fast`), and records which ran |
+| Stop | `done-check.sh` | Refuses a silent "done" when source changed after the last passing verify (full, or the declared fast one; the block names which ran): once per stop (the retry passes), never mid-merge, judging the session's own worktree |
+
+A verify longer than the Bash tool's 10-minute cap cannot be recorded by the hook. Wrap
+it: `bash scripts/dev-kit-verify-mark.sh [--as fast] -- <verify command>` writes the marker
+itself on exit 0, dated from the run's start, wherever it runs (terminal tab included),
+and removes it when the run fails. Vendor the script, or call it from
+`node_modules/@roofadvisor/dev-kit/scripts/` when the project pins the kit.
 
 ## The six design bundles
 

@@ -12,17 +12,33 @@ set -uo pipefail
 input=$(hook_read_input)
 cmd=$(hook_field "$input" "command")
 [ -z "$cmd" ] && exit 0
-# Every command hook_is_verify_run can accept contains one of these, so most Bash
-# calls, in every repo, stop here at the cost of one field read.
+# Every built-in command hook_is_verify_run accepts contains one of these, so most
+# Bash calls, in every repo, stop here at the cost of one field read. A project's
+# declared commands (.claude/verify.json) pass this filter only if they name verify
+# or test too, as `npm run verify:changed` does. One that does not is recorded only
+# when the project wraps it in scripts/dev-kit-verify-mark.sh, which writes its own
+# marker and needs no hook.
 case "$cmd" in *verify*|*test*|*accuracy_report*) ;; *) exit 0 ;; esac
 hook_enter_session_dir "$input"
 hook_opted_in || exit 0
 hook_bash_ran_clean "$input" || exit 0
-hook_is_verify_run "$cmd" || exit 0
-
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+# Declared full and fast commands (2.5.0). An unreadable declaration means none: fewer
+# runs count, and done-check says the file could not be read.
+decl_full=$(hook_verify_decl "$root" full) || decl_full=""
+decl_fast=$(hook_verify_decl "$root" fast) || decl_fast=""
+kind=$(hook_is_verify_run "$cmd" "$decl_full" "$decl_fast") || exit 0
+
 mkdir -p "$root/.claude" 2>/dev/null
-touch "$root/.claude/.last-verify"
+# The marker now says which verify ran (done-check names it when it blocks). Its
+# mtime is still this hook's time, the end of the run: the Bash tool runs in the
+# foreground, so no edit of Claude's lands inside it.
+{
+  echo "writer=verify-record"
+  echo "label=$kind"
+  echo "command=$(printf '%s' "$cmd" | head -1 | cut -c1-200 | tr '\t' ' ')"
+  echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "$root/.claude/.last-verify" 2>/dev/null || touch "$root/.claude/.last-verify"
 # First line only, then truncate, then flatten tabs. `cut -c1-60` operates PER
 # LINE: given a multi-line command — any `git commit` carrying a heredoc message
 # — it emitted one log line per input line, every line after the first a bare
@@ -33,6 +49,6 @@ touch "$root/.claude/.last-verify"
 # level: this is a TSV, and a command containing one silently shifts every
 # column after it.
 summary=$(printf '%s' "$cmd" | head -1 | cut -c1-60 | tr '\t' ' ')
-printf '%s\tverify\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$summary" \
+printf '%s\tverify\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$kind: $summary" \
   >> "$root/.claude/.session-log" 2>/dev/null
 exit 0

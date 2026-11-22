@@ -1230,6 +1230,127 @@ if [ -f "$mal/.claude/.enforcement-log" ] && tail -1 "$mal/.claude/.enforcement-
   echo "  PASS  malformed-state repo still logs the C-01 deny"; pass=$((pass+1))
 else echo "  FAIL  malformed-state repo did not log the deny"; fail=$((fail+1)); fi
 
+# ── 2.5.0: owner rulings of 2026-11-22 (GHL-MCP dev-loop audit, items 3 and 7) ──
+ok() { if [ "$2" = "$3" ]; then echo "  PASS  $1"; pass=$((pass+1)); else echo "  FAIL  $1 (want '$2', got '$3')"; fail=$((fail+1)); fi; }
+MARK="$KIT/scripts/dev-kit-verify-mark.sh"
+# The wrapper's own output goes to the fixture's stderr; nothing here needs it.
+mark() { ( cd "$1" && shift && env -u CI bash "$MARK" "$@" ) >/dev/null 2>&1; }
+has_marker() { [ -f "$1/.claude/.last-verify" ] && echo yes || echo no; }
+
+echo "dev-kit-verify-mark.sh (ruling 1: a verify run anywhere counts)"
+# GHL-MCP's verify takes ~21 min, past the Bash tool's 10-minute cap, and a run in a
+# terminal tab never reached verify-record.sh. Wrapped, the run writes its own marker.
+vm=$(mktemp -d); mkrepo "$vm"
+mark "$vm" -- true; got=$?
+ok "a passing wrapped run exits 0" 0 "$got"
+ok "a passing wrapped run writes the marker, with no hook involved" yes "$(has_marker "$vm")"
+ok "the marker names the wrapper as its writer" "writer=dev-kit-verify-mark" "$(grep '^writer=' "$vm/.claude/.last-verify")"
+ok "the marker records the verify as full by default" "label=full" "$(grep '^label=' "$vm/.claude/.last-verify")"
+dcp "done-check accepts a marker the wrapped run wrote (as from a terminal tab)" 0 "$vm" "$(stop_json "$vm")"
+mark "$vm" -- sh -c 'exit 7'; got=$?
+ok "a failing wrapped run exits with the command's own status" 7 "$got"
+ok "a failing wrapped run removes the earlier marker" no "$(has_marker "$vm")"
+dcp "so done-check blocks after a failed run, though an earlier one passed" 2 "$vm" "$(stop_json "$vm")"
+mark "$vm" -- sh -c 'exit 3'; got=$?
+ok "exit 3 (verify:changed's 'run the full verify') passes through, no marker" "3 no" "$got $(has_marker "$vm")"
+# The marker is dated from the run's START: an edit made while a long run is going is
+# newer than the marker and still blocks. Dated from the end, it would pass.
+mark "$vm" -- sh -c 'sleep 1; echo z >> a.ts; sleep 1'
+ok "an edit during the run: the run still passed and marked" yes "$(has_marker "$vm")"
+dcp "an edit made during the wrapped run still blocks (marker dated from the start)" 2 "$vm" "$(stop_json "$vm")"
+mark "$vm" -- true
+dcp "control: a run after the edit clears it" 0 "$vm" "$(stop_json "$vm")"
+( cd "$vm" && env -u CI bash "$MARK" true ) >/dev/null 2>&1; got=$?
+ok "without '--' it refuses (64) and runs nothing" 64 "$got"
+( cd "$vm" && env -u CI bash "$MARK" --as slow -- true ) >/dev/null 2>&1; got=$?
+ok "an unknown --as label is refused (64)" 64 "$got"
+# An interrupt is not a finished run: no marker, and the earlier one stands.
+before=$(cat "$vm/.claude/.last-verify")
+sleep 1   # mtimes are whole seconds: the edit must land after the marker's second
+( cd "$vm" && echo z >> a.ts && env -u CI bash "$MARK" -- bash -c 'kill -TERM $PPID; sleep 1' ) >/dev/null 2>&1; got=$?
+ok "a terminated run exits 143" 143 "$got"
+ok "a terminated run leaves the earlier marker as it was" "$before" "$(cat "$vm/.claude/.last-verify" 2>/dev/null)"
+dcp "and the edit before it still blocks" 2 "$vm" "$(stop_json "$vm")"
+vmc=$(mktemp -d); mkrepo "$vmc"
+( cd "$vmc" && CI=true bash "$MARK" -- true ) >/dev/null 2>&1; got=$?
+ok "under CI the run passes and writes no marker" "0 no" "$got $(has_marker "$vmc")"
+vmn=$(mktemp -d)
+( cd "$vmn" && env -u CI bash "$MARK" -- sh -c 'exit 5' ) >/dev/null 2>&1; got=$?
+ok "outside a git repo it still runs and passes the status through" 5 "$got"
+# The marker belongs to the tree the verify ran in: a worktree's run marks the worktree.
+vmw=$(mktemp -d)
+( cd "$vmw" && git init -q && git config user.email t@t && git config user.name t && echo x > a.ts && git add -A && git commit -qm init ); mkstate "$vmw"
+( cd "$vmw" && git add .claude && git commit -qm opt-in && git worktree add -q "$vmw-wt" -b wt )
+mark "$vmw-wt" -- true
+ok "a run in a worktree marks the worktree, not the main checkout" "yes no" "$(has_marker "$vmw-wt") $(has_marker "$vmw")"
+rm -rf "$vm" "$vmc" "$vmn" "$vmw" "$vmw-wt"
+
+echo "declared fast verify (ruling 2: verify:changed counts when CI gates the change fully)"
+decl() { printf '%s' "$2" > "$1/.claude/verify.json"; }
+GHL_DECL='{"full":"npm run verify","fast":"npm run verify:changed","fast_note":"CI runs the full verify on every PR"}'
+vrd() { # name want(1 records, 0 does not) command declaration-json [want-label]
+  local d got=0 lbl=""; d=$(mktemp -d); ( cd "$d" && git init -q ); mkstate "$d"
+  [ -n "$4" ] && decl "$d" "$4"
+  bash_json "$3" | (cd "$d" && bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
+  [ -f "$d/.claude/.last-verify" ] && got=1 && lbl=$(sed -n 's/^label=//p' "$d/.claude/.last-verify")
+  if [ "$got" -eq "$2" ] && { [ -z "${5-}" ] || [ "$lbl" = "$5" ]; }; then echo "  PASS  $1"; pass=$((pass+1))
+  else echo "  FAIL  $1 (want recorded=$2 label=${5-}, got $got label=$lbl)"; fail=$((fail+1)); fi
+  rm -rf "$d"
+}
+vrd "undeclared, verify:changed is not a verify" 0 'npm run verify:changed' ''
+vrd "declared fast, verify:changed records as fast" 1 'npm run verify:changed' "$GHL_DECL" fast
+vrd "declared fast, with arguments after it, records as fast" 1 'npm run verify:changed -- --base origin/main' "$GHL_DECL" fast
+vrd "declared fast is still subject to masking: piped into tail" 0 'npm run verify:changed 2>&1 | tail -5' "$GHL_DECL"
+vrd "declared fast is still subject to masking: followed by ;" 0 'npm run verify:changed; echo done' "$GHL_DECL"
+vrd "a word that only starts like the declared one is not it" 0 'npm run verify:changedX' "$GHL_DECL"
+vrd "with a fast one declared, the full verify records as full" 1 'npm run verify' "$GHL_DECL" full
+vrd "a declared full command records as full" 1 'npm run verify:all' '{"full":"npm run verify:all"}' full
+vrd "a malformed declaration declares nothing (fewer runs count)" 0 'npm run verify:changed' '{"fast": "npm run verify:changed",'
+vrd "a non-string declaration declares nothing" 0 'npm run verify:changed' '{"fast": ["npm","run","verify:changed"]}'
+vrd "control: a built-in still records under a malformed declaration" 1 'npm run verify' '{"fast": ' full
+# done-check says which commands count, and which one the marker records.
+df=$(mktemp -d); mkrepo "$df"; decl "$df" "$GHL_DECL"
+msg=$(stop_json "$df" | (cd "$df" && bash "$HOOKS/done-check.sh") 2>&1 >/dev/null)
+ok "no marker: the block names the full verify" yes "$(printf '%s' "$msg" | grep -qF '`npm run verify`' && echo yes || echo no)"
+ok "no marker: the block names the declared fast check and why it counts" yes "$(printf '%s' "$msg" | grep -qF 'declared fast check `npm run verify:changed` (CI runs the full verify on every PR)' && echo yes || echo no)"
+ok "no marker: the block says a terminal run counts when wrapped" yes "$(printf '%s' "$msg" | grep -qF 'dev-kit-verify-mark.sh' && echo yes || echo no)"
+bash_json 'npm run verify:changed' | (cd "$df" && bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
+dcp "a recorded fast verify satisfies done-check in place of the full one" 0 "$df" "$(stop_json "$df")"
+touch -t 202001010000 "$df/.claude/.last-verify"
+msg=$(stop_json "$df" | (cd "$df" && bash "$HOOKS/done-check.sh") 2>&1 >/dev/null)
+ok "stale: the block says the last run was the fast check, and its command" yes "$(printf '%s' "$msg" | grep -qF 'after the last verify run (fast: `npm run verify:changed`' && echo yes || echo no)"
+mark "$df" --as fast -- true
+dcp "a wrapped fast run (--as fast) satisfies done-check" 0 "$df" "$(stop_json "$df")"
+decl "$df" '{"fast": '
+rm -f "$df/.claude/.last-verify"
+msg=$(stop_json "$df" | (cd "$df" && bash "$HOOKS/done-check.sh") 2>&1 >/dev/null)
+ok "an unreadable declaration is named in the block" yes "$(printf '%s' "$msg" | grep -qF '.claude/verify.json could not be read' && echo yes || echo no)"
+printf '' > "$df/.claude/.last-verify"; touch -t 202001010000 "$df/.claude/.last-verify"
+dcp "a pre-2.5.0 (empty) marker still works: stale blocks" 2 "$df" "$(stop_json "$df")"
+touch "$df/.claude/.last-verify"
+dcp "a pre-2.5.0 (empty) marker still works: fresh passes" 0 "$df" "$(stop_json "$df")"
+rm -rf "$df"
+
+echo "session-context.sh (ruling 3: no CLAUDE.md copy, the session's own tree)"
+# Claude Code loads CLAUDE.md itself; printing it again cost every session a second
+# copy, and in a worktree session the copy was the main checkout's, possibly stale.
+scw=$(mktemp -d)
+( cd "$scw" && git init -q && git config user.email t@t && git config user.name t \
+  && mkdir -p .claude/rules && printf '# R\nmain rule\n' > .claude/rules/main-rule.md \
+  && echo "SENTINEL-MAIN-CLAUDEMD" > CLAUDE.md && git add -A && git commit -qm init ); mkstate "$scw"
+( cd "$scw" && git add .claude && git commit -qm opt-in && git worktree add -q "$scw-wt" -b wt )
+printf '# R\nworktree rule\n' > "$scw-wt/.claude/rules/wt-rule.md"; echo "SENTINEL-WT-CLAUDEMD" > "$scw-wt/CLAUDE.md"
+out=$(cd "$scw" && bash "$HOOKS/session-context.sh" 2>&1)
+ok "it no longer prints CLAUDE.md" no "$(printf '%s' "$out" | grep -q 'SENTINEL-MAIN-CLAUDEMD' && echo yes || echo no)"
+ok "it keeps the rules index" yes "$(printf '%s' "$out" | grep -q 'main-rule.md' && echo yes || echo no)"
+ok "it keeps the ENFORCEMENT note" yes "$(printf '%s' "$out" | grep -q -- '--- ENFORCEMENT ---' && echo yes || echo no)"
+# Launched from the main checkout, working in the worktree: the payload's cwd decides.
+out=$(printf '{"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$scw-wt" | (cd "$scw" && bash "$HOOKS/session-context.sh") 2>&1)
+ok "a worktree session indexes the worktree's rules" yes "$(printf '%s' "$out" | grep -q 'wt-rule.md' && echo yes || echo no)"
+ok "a worktree session prints neither CLAUDE.md" no "$(printf '%s' "$out" | grep -q 'SENTINEL-' && echo yes || echo no)"
+ok "a worktree session's telemetry lands in the worktree" yes "$([ -s "$scw-wt/.claude/.session-log" ] && echo yes || echo no)"
+rm -rf "$scw" "$scw-wt"
+
 # 7. The harness must leave the kit's own enforcement log EXACTLY as it found
 #    it — which may legitimately exist with real local denies (it is
 #    persistent and gitignored). Compare, don't require absence.

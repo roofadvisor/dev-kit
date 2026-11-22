@@ -1,5 +1,77 @@
 # Changelog
 
+## 2.5.0 — a verify run anywhere counts, a declared fast verify counts, and no second CLAUDE.md
+
+Three owner rulings of 2026-11-22, from a dev-loop speed and token-spend audit of GHL-MCP
+(its `docs/superpowers/plans/2026-11-22-dev-loop-speed-and-token-spend.md`, items 3 and 7;
+rulings recorded on GHL-MCP main by roofadvisor/GHL-MCP#2347).
+
+**1. A finished, passing verify run counts wherever it ran.** `done-check.sh` blocks a stop
+without `.claude/.last-verify`, and only `verify-record.sh` wrote it: a verify run through
+the Bash tool, in the foreground. That tool stops at 10 minutes. GHL-MCP's `npm run verify`
+took 1,241 s on 2026-11-22, so no session there could meet the check honestly, and a run in
+a terminal tab was never recorded.
+
+- New `scripts/dev-kit-verify-mark.sh [--as full|fast] -- <command>`. It runs the verify,
+  exits with its status, and writes the marker itself only on exit 0: in a terminal tab, in
+  the Bash tool or as a background task. Self-contained (git, bash, `touch -r`), so a project
+  vendors it as one file, or calls it from `node_modules/@roofadvisor/dev-kit/scripts/` when it
+  pins the kit. It writes nothing under `CI`.
+- Strict where it matters. The marker's mtime is the run's **start**, so a file edited during
+  a 20-minute run is newer than the marker and still blocks. A run that finishes non-zero
+  **removes** the marker, so an earlier pass no longer speaks for a tree that now fails. An
+  interrupt (INT/TERM, exit 130/143) is not a finished run and leaves the marker alone. A
+  pass whose marker cannot be written exits 70, loudly.
+
+**2. A declared fast verify counts in place of the full one.** A project can now declare its
+verify commands in `.claude/verify.json`:
+
+```json
+{"full": "npm run verify", "fast": "npm run verify:changed",
+ "fast_note": "CI runs the full verify on every PR"}
+```
+
+- `verify-record.sh` records a run of the declared `full` or `fast` command, under the same
+  rules as the built-ins (piped without pipefail, after `;` or `||`, backgrounded: not a
+  run). Matching is by whole words, so `verify:changedX` is not `verify:changed`. A declared
+  command must still name `verify` or `test` to pass the hook's cheap first filter, or be
+  wrapped by `dev-kit-verify-mark.sh --as fast`, which needs no hook.
+- The marker now says which verify ran: `writer`, `label` (`full`/`fast`), `command`, and
+  `started` (wrapper) or `finished` (hook). A pre-2.5.0 marker is empty and still works.
+- `done-check.sh`'s block names the commands that count (the declared full and fast ones,
+  with `fast_note`), says a terminal run counts when wrapped, and on a stale marker names
+  which verify it records: `Source changed after the last verify run (fast: \`npm run
+  verify:changed\`, started …)`.
+- An unreadable `verify.json` (bad JSON, a non-string value) declares nothing, so fewer runs
+  count, the safe direction, and the block says the file could not be read.
+- This answers the A28 deviation "no repo declares one machine-readably". The opt-in marker
+  `.framework-state.json` stays unparsed; the declaration is a separate file.
+
+**3. `session-context.sh` no longer prints CLAUDE.md.** Its own header called the injection
+redundant: Claude Code loads CLAUDE.md itself, from the cwd and every folder above it. So the
+copy cost every session a second CLAUDE.md, and in a worktree session it was the main
+checkout's copy (the hook process starts where the session launched), which can be days
+behind the worktree's. The `cat CLAUDE.md` is gone. The hook now reads the session's own
+tree from the payload's `cwd` (`hook_enter_session_dir`), as done-check and verify-record
+already do, so the `.claude/rules/` index and the `.claude/.session-log` telemetry belong to
+the worktree too. The rules index, the ENFORCEMENT note and the telemetry columns are
+unchanged.
+
+**Tests.** `tests/hooks_test.sh` 345 → 391: 20 wrapper cases, 20 declared-verify cases and 6
+session-context cases, controls included. Break-verify, each undone in turn on this tree:
+the marker dated from the run's end (1 red: the edit-during-run case); a failed run keeping
+the marker (3 red); the wrapper absent (16 red); verify-record ignoring the declaration (5
+red); done-check's 2.4.2 messages (5 red); `cat CLAUDE.md` restored (2 red); the launch dir
+instead of the session dir (2 red).
+
+**Picking it up.** `claude plugin marketplace update roofadvisor`, then
+`claude plugin update dev-kit@roofadvisor`, then restart Claude Code; the new copy lands in
+`~/.claude/plugins/cache/roofadvisor/dev-kit/2.5.0`. Rulings 2 and 3 then apply with no change
+in any repo. Ruling 1 needs each long-verify project to wrap its verify: GHL-MCP vendors
+`scripts/dev-kit-verify-mark.sh` and its `verify` script calls it (a separate GHL-MCP PR).
+Add `.claude/.last-verify` to the project's `.gitignore` if it is not there.
+
+
 ## 2.4.2 — the axe gate no longer measures a colour that is still fading
 
 `kit/scripts/axe_audit.mjs --dark` set `data-theme="dark"` and ran axe at once. A component

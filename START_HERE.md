@@ -60,6 +60,11 @@ token cost, including the hooks — they are declared once, globally, in
 `.claude/.framework-state.json` before doing anything. `/project-init` writes
 only `guard-local.sh` into a scaffolded repo's own `.claude/settings.json`.
 
+A project whose verify outlasts the Bash tool's 10-minute cap wraps it in
+`scripts/dev-kit-verify-mark.sh`, so a passing run in a terminal tab satisfies
+`done-check.sh`; a fast verify the project accepts in its place is declared in
+`.claude/verify.json` (2.5.0, `CHANGELOG.md`).
+
 ## Non-negotiables carried forward
 
 1. Every guard gets a red-then-green proof — break it, see it fail, restore.
