@@ -1227,7 +1227,8 @@ Owner rulings of 2026-11-22, from GHL-MCP's dev-loop speed and token-spend audit
   the run's start, and removes it on a failed run.
 - **A declared fast verify counts.** `.claude/verify.json` declares `full` and `fast`
   (GHL-MCP: `npm run verify:changed`, roofadvisor/GHL-MCP#2349). verify-record counts them
-  under the same masking rules; done-check's block names them and which one the marker
+  under the same masking rules, and from 2.5.2 only as declared, with nothing after them but
+  redirections; done-check's block names them and which one the marker
   records. This closes A28's deviation "no repo declares one machine-readably".
 - **No second CLAUDE.md.** `session-context.sh` stopped printing it (A15 already called it
   redundant) and reads the session's own worktree from the payload's `cwd`.

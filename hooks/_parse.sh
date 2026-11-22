@@ -116,9 +116,10 @@ hook_enter_session_dir() {
 # the retry passes (R1); a false one certifies a change nothing checked.
 #
 # Optional 2nd and 3rd arguments: the project's declared full and fast verify
-# commands (.claude/verify.json, hook_verify_decl). A command that starts with the
-# declared words counts too, under the same rules about what masks its status. On a
-# match it prints which verify ran: "fast" for the declared fast one, else "full".
+# commands (.claude/verify.json, hook_verify_decl). The declared words count too,
+# under the same rules about what masks its status, with nothing after them but
+# redirections: an argument could narrow what the command checks. On a match it
+# prints which verify ran: "fast" for the declared fast one, else "full".
 hook_is_verify_run() {
   command -v python3 >/dev/null 2>&1 || return 1
   python3 - "$1" "${2-}" "${3-}" <<'PY'
@@ -207,14 +208,39 @@ def pipefail_on(upto):
     return on
 
 
+RDOP = {"<", ">", ">>", ">&", "<&", "&>", "&>>", ">|", "<>"}
+
+
+def only_redirects(rest):
+    # `2>&1`, `> out.log`, `&>> log`: where the output goes, not what is checked.
+    i = 0
+    while i < len(rest):
+        if rest[i].isdigit() and i + 1 < len(rest) and rest[i + 1] in RDOP:
+            i += 1
+        if rest[i] not in RDOP or i + 1 >= len(rest) or rest[i + 1] in RDOP:
+            return False
+        i += 2
+    return True
+
+
 def runs_verify(words):
     while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
         words = words[1:]
     if not words:
         return False
+    # A declared command counts only as declared (2.5.2). Arguments after it can
+    # narrow it, as `npm run verify:changed -- --base-ref HEAD` checks nothing, so a
+    # declared command with anything but redirections after it is not a verify, and
+    # does not fall through to the built-in list either. Every declaration is tried,
+    # so a fast command that extends the full one is labelled fast.
+    narrowed = False
     for kind, w in DECL:
         if words[:len(w)] == w:
-            return kind
+            if only_redirects(words[len(w):]):
+                return kind
+            narrowed = True
+    if narrowed:
+        return False
     return "full" if builtin_verify(words) else False
 
 

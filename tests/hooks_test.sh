@@ -1309,7 +1309,13 @@ vrd() { # name want(1 records, 0 does not) command declaration-json [want-label]
 }
 vrd "undeclared, verify:changed is not a verify" 0 'npm run verify:changed' ''
 vrd "declared fast, verify:changed records as fast" 1 'npm run verify:changed' "$GHL_DECL" fast
-vrd "declared fast, with arguments after it, records as fast" 1 'npm run verify:changed -- --base origin/main' "$GHL_DECL" fast
+vrd "declared fast, with a narrowing argument after it, is not a verify" 0 'npm run verify:changed -- --base-ref HEAD' "$GHL_DECL"
+vrd "declared full, with an argument after it, does not fall through to the built-in" 0 'npm run verify -- --only lint' "$GHL_DECL"
+vrd "declared fast, with only redirections after it, records as fast" 1 'npm run verify:changed 2>&1 >/tmp/vc.log' "$GHL_DECL" fast
+vrd "declared fast, with &>> after it, records as fast" 1 'npm run verify:changed &>> vc.log' "$GHL_DECL" fast
+vrd "a redirection with no target is not a redirection" 0 'npm run verify:changed 2>' "$GHL_DECL"
+vrd "declared fast under pipefail, piped into tail, records as fast" 1 'set -o pipefail; npm run verify:changed 2>&1 | tail -5' "$GHL_DECL" fast
+vrd "a fast command that extends the full one is labelled fast" 1 'npm run verify -- --fast' '{"full":"npm run verify","fast":"npm run verify -- --fast"}' fast
 vrd "declared fast is still subject to masking: piped into tail" 0 'npm run verify:changed 2>&1 | tail -5' "$GHL_DECL"
 vrd "declared fast is still subject to masking: followed by ;" 0 'npm run verify:changed; echo done' "$GHL_DECL"
 vrd "a word that only starts like the declared one is not it" 0 'npm run verify:changedX' "$GHL_DECL"
