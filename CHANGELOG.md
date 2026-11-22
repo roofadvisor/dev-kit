@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.5.2 — a declared verify counts only as declared
+
+Two of 2.5.1's open findings recorded a pass for a check that was narrower than, or other
+than, the one declared. Owner go-ahead of 2026-11-22 to fix both.
+
+- **A declared command counts only with nothing after it but redirections.** verify-record
+  matched the declared words as a prefix, so `npm run verify:changed -- --base-ref HEAD`,
+  which diffs the tree against itself and checks nothing, recorded a pass as the fast verify.
+  Now any argument after a declared command means it is not a verify, and it does not fall
+  through to the built-in list (`npm run verify -- --only lint` no longer counts as the
+  built-in `npm run verify`). Redirections (`2>&1`, `> log`, `&>> log`) still count, and so
+  does a pipe under `pipefail`, as before. Every declaration is tried, so a fast command that
+  extends the full one (`npm run verify -- --fast`) is labelled fast, not full. Break-verify:
+  the prefix match put back, 4 red; the fall-through put back, 1 red.
+- **The wrapper half is the project's.** `dev-kit-verify-mark.sh` marks whatever it runs; a
+  project whose verify takes narrowing options refuses them under `DEV_KIT_VERIFY_MARK`, as
+  GHL-MCP's `verify-changed.mjs` now does for `--repo` and a non-default `--base-ref`
+  (a separate GHL-MCP PR). Unchanged here.
+
+`tests/hooks_test.sh` 401 → 407. Pick up as for 2.5.0: `claude plugin marketplace update
+roofadvisor`, `claude plugin update dev-kit@roofadvisor`, restart.
+
+Still open from the 2.5.1 review: a built-in command still counts with arguments after it
+(`pytest tests/one.py`) when the project declares nothing that matches it, any non-empty `CI`
+skips the marker, and a file deleted after a verify still does not make the marker stale.
+
 ## 2.5.1 — fixes from a local review of 2.5.0
 
 Codex did not review roofadvisor/dev-kit#19 (usage limit), so it was reviewed locally after
