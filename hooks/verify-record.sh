@@ -30,9 +30,13 @@ decl_fast=$(hook_verify_decl "$root" fast) || decl_fast=""
 kind=$(hook_is_verify_run "$cmd" "$decl_full" "$decl_fast") || exit 0
 
 mkdir -p "$root/.claude" 2>/dev/null
-# The marker now says which verify ran (done-check names it when it blocks). Its
-# mtime is still this hook's time, the end of the run: the Bash tool runs in the
-# foreground, so no edit of Claude's lands inside it.
+# A wrapped verify (scripts/dev-kit-verify-mark.sh) has just written its own marker,
+# dated from the run's start, and its own session-log line. Leave both: rewritten
+# here, the marker would be dated from the end, and an edit a background subagent or
+# another session made during the run would pass done-check (2.5.1).
+hook_marker_fresh_from_wrapper "$root/.claude/.last-verify" && exit 0
+# The marker says which verify ran (done-check names it when it blocks). Its mtime is
+# this hook's time, the end of the run.
 {
   echo "writer=verify-record"
   echo "label=$kind"
@@ -50,5 +54,5 @@ mkdir -p "$root/.claude" 2>/dev/null
 # column after it.
 summary=$(printf '%s' "$cmd" | head -1 | cut -c1-60 | tr '\t' ' ')
 printf '%s\tverify\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$kind: $summary" \
-  >> "$root/.claude/.session-log" 2>/dev/null
+  >> "$(hook_log_root || echo "$root")/.claude/.session-log" 2>/dev/null
 exit 0

@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.5.1 — fixes from a local review of 2.5.0
+
+Codex did not review roofadvisor/dev-kit#19 (usage limit), so it was reviewed locally after
+it merged. Three findings were real; each fix has a test that goes red when it is undone.
+
+- **verify-record no longer overwrites a wrapped run's marker.** A wrapped verify run through
+  the Bash tool writes its own marker, dated from the run's start, and then verify-record
+  fired and rewrote it, dated from the end. An edit a background subagent or another session
+  made during the run then passed done-check. 2.5.0's reasoning ("no edit of Claude's lands
+  inside a foreground Bash call") does not hold once subagents run in the background. Now
+  verify-record leaves a marker whose `writer` is the wrapper and whose ctime is within the
+  last 60 s (`hook_marker_fresh_from_wrapper`; `DEV_KIT_WRAPPER_FRESH_SECONDS` sets the window
+  for tests), and skips its own log line, which the wrapper already wrote. Break-verify: the
+  check removed, 3 red.
+- **Telemetry goes to the main checkout.** 2.5.0 moved session-context's `.session-log` into
+  the session's worktree, where it was deleted with the worktree after merge, and
+  `session_report.py`, `/retro` and `/project-audit` read the checkout they run in. The
+  session-start row, verify-record's line and the wrapper's line now go to the main checkout
+  when the session is in a linked worktree and the main checkout has a `.claude/` folder
+  (`hook_log_root`); otherwise to the tree itself. The verify marker stays with the tree
+  verified. Break-verify: each writer sent back to the worktree, 1 red apiece.
+- **The wrapped command knows it is wrapped.** `dev-kit-verify-mark.sh` exports
+  `DEV_KIT_VERIFY_MARK=<label>` to the command when it will write a marker, so a mode that exits
+  0 having checked nothing can refuse rather than leave a passing marker. GHL-MCP's
+  `npm run verify:changed -- --plan` printed the plan, ran nothing, exited 0 and was marked;
+  GHL-MCP's verify-changed.mjs now refuses `--plan` under the wrapper (a separate GHL-MCP PR).
+  Break-verify: the export removed, 1 red. Projects that vendor the script should refresh it.
+
+`tests/hooks_test.sh` 391 → 401. Pick up as for 2.5.0: `claude plugin marketplace update
+roofadvisor`, `claude plugin update dev-kit@roofadvisor`, restart.
+
+Not changed, from the same review: a declared command still counts with any arguments after
+it, a fast command that extends the full one is labelled full, any non-empty `CI` skips the
+marker, and a file deleted after a verify still does not make the marker stale.
+
 ## 2.5.0 — a verify run anywhere counts, a declared fast verify counts, and no second CLAUDE.md
 
 Three owner rulings of 2026-11-22, from a dev-loop speed and token-spend audit of GHL-MCP

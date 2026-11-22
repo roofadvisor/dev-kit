@@ -57,7 +57,8 @@ layer for `session_report.py`, `/retro`, `/promote-rule`); the rules-index
 injection is redundant defense-in-depth kept for older CLIs and
 `--setting-sources` exclusions. Since 2.5.0 it no longer prints CLAUDE.md
 (Claude Code loads it, and in a worktree session the hook's copy was the main
-checkout's), and it reads the session's own worktree. Do not cite it as
+checkout's), and it reads the session's own worktree. Its log row still goes to
+the main checkout (2.5.1), which outlives a worktree. Do not cite it as
 the reason rules are in context, and verify actual loading with `/context`
 rather than inference. "The agent stopped reading the rules file" can still be
 a configuration defect — but establish it with evidence, not doctrine.

@@ -294,6 +294,43 @@ hook_marker_field() {
   sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1
 }
 
+# True when MARKER was written by scripts/dev-kit-verify-mark.sh within the last
+# FRESH seconds (default 60; DEV_KIT_WRAPPER_FRESH_SECONDS overrides it, for tests).
+# A wrapped verify run through the Bash tool writes its own marker, dated from the
+# run's START, and then verify-record fires. Rewriting the marker there would date it
+# from the END and let an edit made during the run (a background subagent, another
+# session in the same checkout) pass done-check (2.5.1). The ctime is the write: the
+# wrapper's `touch -r` and `mv` both set it, and nothing can set it back.
+hook_marker_fresh_from_wrapper() {
+  local m="$1" fresh="${DEV_KIT_WRAPPER_FRESH_SECONDS:-60}" c now
+  [ -f "$m" ] || return 1
+  [ "$(hook_marker_field "$m" writer)" = "dev-kit-verify-mark" ] || return 1
+  c=$(stat -c %Z "$m" 2>/dev/null || stat -f %c "$m" 2>/dev/null) || return 1
+  now=$(date +%s)
+  [ "$((now - c))" -ge 0 ] && [ "$((now - c))" -le "$fresh" ]
+}
+
+# The checkout whose .claude/.session-log keeps a session's telemetry: the MAIN
+# worktree, not a linked one. A linked worktree is deleted after its branch merges,
+# and session_report.py, /retro and /project-audit read the checkout they run in, so
+# telemetry written into a worktree was lost with it (2.5.1). Falls back to this
+# tree's own root for a bare or separate-git-dir repo, or a main checkout with no
+# .claude/ folder (one that never opted in gets no new folder from a hook).
+# Prints the directory; returns 1 outside a repo. The verify marker is NOT kept here:
+# it belongs to the tree that was verified.
+hook_log_root() {
+  local top common main
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+  common=$(git rev-parse --git-common-dir 2>/dev/null) && common=$(cd "$common" 2>/dev/null && pwd -P) || common=""
+  main=""
+  [ -n "$common" ] && [ "${common##*/}" = ".git" ] && main=${common%/.git}
+  if [ -n "$main" ] && [ "$main" != "$top" ] && [ -d "$main/.claude" ]; then
+    printf '%s\n' "$main"
+  else
+    printf '%s\n' "$top"
+  fi
+}
+
 # True when the CLI reported this Bash call as a clean finish. PostToolUse is not
 # "passed": the CLI fires PostToolUseFailure only for an exit it judges an error,
 # and it reinterprets some non-zero exits as success (exit 1 from a line ending in
