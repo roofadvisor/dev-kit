@@ -35,7 +35,8 @@ uninstall/reinstall steps.
 | Commands | 2 | `/gate` (run the objective design gates, all-or-nothing) · `/critique` (adversarial design review — after gates, never instead) |
 | Agents | 5 | `design-critic` (taste verdicts) · `verify-runner`, `schema-reviewer`, `integration-auditor`, `contract-drift-checker` (audit agents, selected by which rules modules a project holds) |
 | Rules modules | 25 | composable `.claude/rules/*.md`; 4 always-on (`core`, `guards`, `response-format`, `silent-degradation`), 21 selected by the `/project-init` interview |
-| Hooks | 4 events | `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop` (6 scripts: guard, Rule 0, formatter, verify telemetry, session telemetry, done-check) — harness-only, no model context cost |
+| Hooks | 4 events | `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop` (5 scripts: guard, Rule 0, verify record, session telemetry, done-check) — harness-only; the SessionStart banner is a rules index and the enforcement note, never a second copy of CLAUDE.md |
+| Verify marker | 1 script | `scripts/dev-kit-verify-mark.sh -- <verify>`: a project's verify writes done-check's marker itself on exit 0, so a run in a terminal tab counts; `.claude/verify.json` declares the full and a fast verify |
 | `kit/` | — | DTCG tokens (14 files), 52 component specs, taste doctrine, WCAG 2.2 checklists, framework adapters, workflows, ~30 local verification scripts |
 
 **Token cost:** `claude plugin details dev-kit` reports ~3,423 always-on tokens —

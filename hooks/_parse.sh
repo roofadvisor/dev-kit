@@ -114,10 +114,24 @@ hook_enter_session_dir() {
 #  - a # comment runs to the end of its line, and no further.
 # A command it cannot parse is not a verify. A missed record costs one block, and
 # the retry passes (R1); a false one certifies a change nothing checked.
+#
+# Optional 2nd and 3rd arguments: the project's declared full and fast verify
+# commands (.claude/verify.json, hook_verify_decl). A command that starts with the
+# declared words counts too, under the same rules about what masks its status. On a
+# match it prints which verify ran: "fast" for the declared fast one, else "full".
 hook_is_verify_run() {
   command -v python3 >/dev/null 2>&1 || return 1
-  python3 - "$1" <<'PY'
+  python3 - "$1" "${2-}" "${3-}" <<'PY'
 import re, shlex, sys
+
+DECL = []
+for kind, text in (("full", sys.argv[2]), ("fast", sys.argv[3])):
+    try:
+        w = shlex.split(text)
+    except ValueError:
+        w = []
+    if w:
+        DECL.append((kind, w))
 
 if re.search(r"\\[;&|]|(['\"])[;&|]+\1", sys.argv[1]):
     sys.exit(1)
@@ -198,6 +212,13 @@ def runs_verify(words):
         words = words[1:]
     if not words:
         return False
+    for kind, w in DECL:
+        if words[:len(w)] == w:
+            return kind
+    return "full" if builtin_verify(words) else False
+
+
+def builtin_verify(words):
     head, rest = words[0], words[1:]
     if head.rsplit("/", 1)[-1] in ("verify", "verify.sh"):
         return True
@@ -223,16 +244,54 @@ def runs_verify(words):
 
 
 for i, words in enumerate(segs):
-    if not runs_verify(words):
+    kind = runs_verify(words)
+    if not kind:
         continue
     after = ops[i:]
     if after[:1] in (["|"], ["|&"]) and not pipefail_on(i):
         continue
     if any(o in MASK for o in after):
         continue
+    print(kind)
     sys.exit(0)
 sys.exit(1)
 PY
+}
+
+# The project's declared verify commands: .claude/verify.json at ROOT, e.g.
+#   {"full": "npm run verify", "fast": "npm run verify:changed",
+#    "fast_note": "CI runs the full verify on every PR"}
+# "fast" is a quicker check the project accepts in place of the full verify for
+# done-check, because CI gates the change fully. Prints KEY's string value, or
+# nothing when the file or the key is absent. Returns 1 when the file is present
+# but cannot be read (bad JSON, a non-string value, no python3): the caller then
+# knows of no declared command, so fewer runs count, which is the safe direction,
+# and done-check says why.
+hook_verify_decl() {
+  local f="$1/.claude/verify.json"
+  [ -f "$f" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+if not isinstance(d, dict):
+    sys.exit(1)
+v = d.get(sys.argv[2])
+if v is None:
+    sys.exit(0)
+if not isinstance(v, str):
+    sys.exit(1)
+print(v.split("\n")[0].strip())
+' "$f" "$2" 2>/dev/null
+}
+
+# One key=value field of a verify marker (.claude/.last-verify), or nothing. A
+# marker written before 2.5.0 is empty: every field is then absent.
+hook_marker_field() {
+  sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1
 }
 
 # True when the CLI reported this Bash call as a clean finish. PostToolUse is not
