@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.5.3 — a refusal before anything ran keeps the earlier marker
+
+A local review of GHL-MCP#2356 found that a project's refusal under `DEV_KIT_VERIFY_MARK`
+(GHL-MCP's `npm run verify:changed -- --plan`, which checks nothing) exited non-zero, and the
+wrapper removed the marker an earlier passing `npm run verify` had written, as for any failed
+run. Asking for the plan undid a real pass.
+
+- **`dev-kit-verify-mark.sh` exports `DEV_KIT_VERIFY_REFUSED`**, a path, beside
+  `DEV_KIT_VERIFY_MARK`. A command that refuses before checking anything creates that file
+  and exits non-zero; the wrapper then leaves the marker as it was (as for an interrupt) and
+  exits with the command's status. Any other non-zero exit still removes the marker. A
+  command that creates the file and exits 0 writes no marker and exits 70. The file is
+  removed when the wrapper exits. Break-verify: the refusal branch disabled, 2 red.
+
+`tests/hooks_test.sh` 407 → 412. Projects that vendor the wrapper re-copy it; GHL-MCP's
+`verify-changed.mjs` creates the file in its refusals (a separate GHL-MCP PR). Pick up as
+for 2.5.0: `claude plugin marketplace update roofadvisor`, `claude plugin update
+dev-kit@roofadvisor`, restart.
+
 ## 2.5.2 — a declared verify counts only as declared
 
 Two of 2.5.1's open findings recorded a pass for a check that was narrower than, or other

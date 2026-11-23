@@ -1290,6 +1290,19 @@ mark "$vmw-wt" --as fast -- sh -c 'test "$DEV_KIT_VERIFY_MARK" = fast'; got=$?
 ok "the wrapped command sees DEV_KIT_VERIFY_MARK set to its label" 0 "$got"
 ( cd "$vmw-wt" && CI=true bash "$MARK" -- sh -c 'test -z "${DEV_KIT_VERIFY_MARK-}"' ) >/dev/null 2>&1; got=$?
 ok "under CI, where no marker is written, it is not set" 0 "$got"
+# 2.5.3: a refusal before anything ran leaves the earlier marker; any other failure removes it.
+mark "$vmw-wt" -- true; before=$(cat "$vmw-wt/.claude/.last-verify")
+mark "$vmw-wt" -- sh -c ': > "$DEV_KIT_VERIFY_REFUSED"; exit 2'; got=$?
+ok "a refused run exits with the command's own status" 2 "$got"
+ok "a refused run leaves the earlier marker as it was" "$before" "$(cat "$vmw-wt/.claude/.last-verify" 2>/dev/null)"
+mark "$vmw-wt" -- sh -c ': > "$DEV_KIT_VERIFY_REFUSED"; exit 0'; got=$?
+ok "a refusal that exits 0 is 70, and writes no marker" "70 $before" "$got $(cat "$vmw-wt/.claude/.last-verify" 2>/dev/null)"
+rp=$(mktemp)
+mark "$vmw-wt" -- sh -c 'echo "$DEV_KIT_VERIFY_REFUSED" > "$1"; : > "$DEV_KIT_VERIFY_REFUSED"; exit 2' sh "$rp"
+ok "the refusal file is removed when the wrapper exits" "yes no" "$([ -s "$rp" ] && echo yes || echo no) $([ -e "$(cat "$rp")" ] && echo yes || echo no)"
+rm -f "$rp"
+mark "$vmw-wt" -- sh -c 'exit 2'
+ok "control: the same exit without the refusal file removes the marker" no "$(has_marker "$vmw-wt")"
 bash_json 'npm run verify' | (cd "$vmw-wt" && DEV_KIT_WRAPPER_FRESH_SECONDS=-1 bash "$HOOKS/verify-record.sh") >/dev/null 2>&1
 ok "verify-record logs a worktree's run in the main checkout too" yes \
   "$(grep -q 'verify	full: npm run verify' "$vmw/.claude/.session-log" 2>/dev/null && echo yes || echo no)"
