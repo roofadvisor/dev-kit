@@ -29,6 +29,11 @@
 #    (2.5.1). GHL-MCP's verify-changed.mjs refuses --plan this way.
 #  - Its session-log line goes to the main checkout when this is a linked worktree, as
 #    the hooks' do (2.5.1): a worktree is deleted after merge, its log with it.
+#  - A command that refuses BEFORE checking anything (GHL-MCP's verify-changed.mjs
+#    under DEV_KIT_VERIFY_MARK) creates the file DEV_KIT_VERIFY_REFUSED names and exits
+#    non-zero: nothing ran, so like an interrupt it leaves the marker as it was, where
+#    any other non-zero exit removes it (2.5.3). A refusal that exits 0 writes no marker
+#    and exits 70.
 #
 # Self-contained on purpose, so a project can vendor it as one file or call it from
 # node_modules/@roofadvisor/dev-kit/scripts/ when it pins the kit. Needs git, bash and
@@ -64,7 +69,9 @@ if [ -n "$root" ]; then
   stamp=$(mktemp "${TMPDIR:-/tmp}/$me.XXXXXX") || { echo "$me: cannot create a start stamp; refusing to run without one." >&2; exit 70; }
 fi
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-trap '[ -n "$stamp" ] && rm -f "$stamp"' EXIT
+refusal=""
+[ -n "$stamp" ] && refusal="$stamp.refused"
+trap '[ -n "$stamp" ] && rm -f "$stamp" "$refusal"' EXIT
 # Without these traps bash would still exit on the signal, but say so plainly: an
 # interrupted run writes nothing.
 trap 'echo "$me: interrupted; no marker written." >&2; exit 130' INT
@@ -73,12 +80,23 @@ trap 'echo "$me: terminated; no marker written." >&2; exit 143' TERM
 # Tells the command it runs under this script, so a mode of it that exits 0 without
 # checking anything (GHL-MCP's `verify-changed.mjs --plan`) can refuse instead of
 # leaving a passing marker (2.5.1). Set only when a marker will be written.
-[ -n "$root" ] && export DEV_KIT_VERIFY_MARK="$label"
+[ -n "$root" ] && export DEV_KIT_VERIFY_MARK="$label" DEV_KIT_VERIFY_REFUSED="$refusal"
 "$@"
 status=$?
 
 [ -n "$root" ] || exit "$status"
 marker="$root/.claude/.last-verify"
+# The command said it refused before checking anything (2.5.3): no run finished, so the
+# marker stays as it was, as for an interrupt. Read before the status, so a refusal that
+# exits 0 can never be marked a pass.
+if [ -e "$refusal" ]; then
+  if [ "$status" -eq 0 ]; then
+    echo "$me: '$1' said it refused, yet exited 0; no marker written, the earlier one left as it was." >&2
+    exit 70
+  fi
+  echo "$me: '$1' refused before checking anything (exit $status); the marker is left as it was." >&2
+  exit "$status"
+fi
 if [ "$status" -ne 0 ]; then
   gone=""
   [ -f "$marker" ] && rm -f "$marker" && gone=" (the earlier one was removed)"
